@@ -321,27 +321,36 @@ app.get('/mcp/sse', async (request: FastifyRequest, reply: FastifyReply) => {
 
 app.post('/mcp/message', async (request: FastifyRequest, reply: FastifyReply) => {
     const sessionId = (request.query as any).sessionId;
-    const bodySize = JSON.stringify(request.body).length;
-    console.log(`[MCP] [DEBUG] Incoming POST for Session: [${sessionId}] (Size: ${bodySize} bytes)`);
+    const body = request.body as any;
 
-    if (!sessionId) {
-        console.warn(`[MCP] [ERROR] POST missing sessionId query parameter.`);
-        return reply.status(400).send({ error: "Missing sessionId" });
+    console.log(`[MCP] [DEBUG] Incoming POST for Session: [${sessionId}] (Size: ${JSON.stringify(body).length} bytes)`);
+
+    let session = activeConnections.get(sessionId);
+
+    // SELF-HEALING LOGIC:
+    // If the session is missing, but there is exactly ONE active connection, 
+    // we "adopt" this new sessionId for that connection. 
+    // This solves the issue where the client chooses its own ID for POST but uses ours for SSE.
+    if (!session && activeConnections.size === 1) {
+        const onlySessionId = activeConnections.keys().next().value as string;
+        const onlySession = activeConnections.get(onlySessionId)!;
+        console.log(`[MCP] [HEAL] Mapping orphan POST session [${sessionId}] to active SSE session [${onlySessionId}]`);
+        activeConnections.set(sessionId as string, onlySession);
+        session = onlySession;
     }
 
-    const session = activeConnections.get(sessionId);
     if (!session) {
-        console.warn(`[MCP] [404] Session ${sessionId} NOT FOUND in map.`);
+        console.error(`[MCP] [404] Session ${sessionId} NOT FOUND in map.`);
         console.log(`[MCP] [VERBOSE] Known Sessions in memory: [${Array.from(activeConnections.keys()).join(', ')}]`);
+        console.log(`[MCP] [VERBOSE] Body Snippet: ${JSON.stringify(body).slice(0, 200)}`);
         return reply.status(404).send({ error: "Session not found or expired" });
     }
 
     try {
-        await session.transport.handleMessage(request.body as any);
-        return reply.status(202).send("Accepted");
-    } catch (error: any) {
-        console.error(`[MCP] [ERROR] Internal error handling message for ${sessionId}:`, error.message);
-        return reply.status(500).send({ error: "Failed to handle message" });
+        await session.transport.handlePostMessage(request.raw, reply.raw);
+    } catch (err: any) {
+        console.error(`[MCP] [ERROR] Failed to handle message for session ${sessionId}:`, err);
+        return reply.status(500).send({ error: "Failed to process message" });
     }
 });
 
