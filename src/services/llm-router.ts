@@ -140,32 +140,13 @@ export async function queryLocalModel(prompt: string): Promise<{ answer: string;
     }
 }
 
-/**
- * Specialized /chess endpoint logic for Agent-Neo.
- * Enforces JSON structure and "Hidden Reasoning" to improve logic without breaking the app.
- */
-export async function queryChessAgent(prompt: string): Promise<{ answer: string; confidence: number }> {
+export async function queryChessAgent(prompt: string, messages: any[] = [], tools: any[] = []): Promise<{ answer: string; confidence: number }> {
     console.log('[LLM Router] Chess Agent Request (Refined Logic)');
 
-    // User-requested "Refined Prompting Architecture"
-    // 1. Restate 2. Consequences 3. Verify 4. Reconsider
-    // We wrap this in a JSON enforcement to keep the app working.
     const enhancedPrompt = `IMPORTANT: Your response must be valid JSON.
-
     INSTRUCTIONS:
     You must follow this specific reasoning process in the "_reasoning" field before answering:
-    1. Restate what the user is actually trying to accomplish (Goal).
-    2. Think through the logical consequences of each option (Consequences).
-    3. Verify that your answer makes sense given the goal and physical constraints (Verify).
-       - CRITICAL CHECK: Does the action require an object? Is the object with the user?
-    4. If your answer doesn't align with the stated goal, reconsider.
-
-    Example JSON:
-    {
-      "_reasoning": "1. Goal: Wash car. 2. Consequences: Walking = arrive without car. Driving = arrive with car. 3. Verify: Washing requires car. Walking fails condition. 4. Reconsider: Must drive.",
-      "message": "You should drive, because you need the car to be at the car wash."
-    }
-
+    1. Restate Goal. 2. Consequences. 3. Verify. 4. Reconsider.
     User Request: ${prompt}`;
 
     try {
@@ -177,13 +158,10 @@ export async function queryChessAgent(prompt: string): Promise<{ answer: string;
             ],
             stream: false,
         });
-
-        const content = response.message.content;
-        console.log('[LLM Router] Chess Agent Response:', content);
-
-        return { answer: content, confidence: 1.0 };
+        return { answer: response.message.content, confidence: 1.0 };
     } catch (error) {
-        console.error('Chess Agent failed:', error);
+        console.warn('[LLM Router] Chess Agent (Ollama) failed, attempting online fallback...');
+        if (config.GROK_API_KEY) return queryGrokAgent(messages.length > 0 ? messages : [{ role: 'user', content: prompt }], tools);
         return { answer: "{}", confidence: 0 };
     }
 }
@@ -196,11 +174,7 @@ export async function queryReasoningModel(prompt: string): Promise<{ answer: str
             messages: [{ role: 'user', content: prompt }],
             stream: false,
         });
-
         const content = response.message.content;
-        console.log('[LLM Router] Raw Deepseek Response (Reason):', content);
-
-        // Extract <think> block
         let reasoning = "";
         let answer = content;
         const thinkMatch = content.match(/<think>([\s\S]*?)<\/think>/i);
@@ -208,35 +182,22 @@ export async function queryReasoningModel(prompt: string): Promise<{ answer: str
             reasoning = thinkMatch[1].trim();
             answer = content.replace(/<think>[\s\S]*?<\/think>/i, '').trim();
         }
-
         return { answer, reasoning, confidence: 1.0 };
     } catch (error) {
-        console.error("Reasoning Model Error:", error);
+        console.warn('[LLM Router] Reasoning Model (Ollama) failed, attempting online fallback...');
+        if (config.GROK_API_KEY) {
+            const res = await queryGrokAgent([{ role: 'user', content: prompt }]);
+            return { answer: res.answer, reasoning: "Cloud Fallback (Grok)", confidence: 1.0 };
+        }
         return { answer: "Reasoning model failed.", reasoning: "", confidence: 0 };
     }
 }
 
 export async function queryChessReasoningModel(prompt: string): Promise<{ answer: string; confidence: number }> {
     console.log('[LLM Router] Chess Reasoning Model Request (Minimax M2)');
-
-    // Deepseek R1 needs to "think" (output <think>...</think>) to work correctly.
-    // If we force strict JSON without allowing the think block, it becomes dumb.
     const systemPrompt = `You are an intelligent agent.
-    
-    INSTRUCTIONS:
-    1. First, you MUST output your internal reasoning inside \`<think>...</think>\` tags.
-    2. In your thinking, analyze the Goal, Object, and Conditions (e.g., "To wash a car, the car must be at the location").
-    3. AFTER the </think> closing tag, output ONLY a valid JSON object.
-    
-    Example Output:
-    <think>
-    Goal: Wash car. Object: Car. Condition: Car must be there.
-    Walking fails because car stays behind. Driving moves car.
-    </think>
-    {
-      "message": "You should drive to the car wash."
-    }
-    `;
+    1. Output internal reasoning in <think> tags.
+    2. After </think>, output ONLY valid JSON.`;
 
     try {
         const response = await ollama.chat({
@@ -247,25 +208,11 @@ export async function queryChessReasoningModel(prompt: string): Promise<{ answer
             ],
             stream: false,
         });
-
-        const content = response.message.content;
-        console.log('[LLM Router] Raw Deepseek Response:', content);
-
-        // Deepseek might output: <think>...</think> ```json { ... } ``` or just { ... }
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        let cleanJson = "{}";
-        if (jsonMatch) {
-            cleanJson = jsonMatch[0];
-        } else {
-            // Fallback: if no JSON found, try to use the whole content if it looks kinda like JSON, or wrap it
-            if (content.trim().startsWith('{')) {
-                cleanJson = content.trim();
-            }
-        }
-
-        return { answer: cleanJson, confidence: 1.0 };
+        const jsonMatch = response.message.content.match(/\{[\s\S]*\}/);
+        return { answer: jsonMatch ? jsonMatch[0] : "{}", confidence: 1.0 };
     } catch (error) {
-        console.error('Chess Reasoning Agent failed:', error);
+        console.warn('[LLM Router] Chess Reasoning (Ollama) failed, attempting online fallback...');
+        if (config.GROK_API_KEY) return queryGrokAgent([{ role: 'user', content: prompt }]);
         return { answer: "{}", confidence: 0 };
     }
 }
@@ -411,10 +358,30 @@ export async function queryGeneralAgent(messages: any[], tools?: any[]): Promise
         appendLog('General Agent (Ollama)', { messages: mappedMessages, tools }, finalAns);
         return finalAns;
 
-    } catch (error) {
-        console.error('General Agent failed:', error);
+    } catch (error: any) {
+        console.warn('[LLM Router] Ollama failure, attempting online fallback for /agent...');
+
+        // If it's a connection error (ECONNREFUSED) or we just want to be resilient in the cloud:
+        if (config.GROK_API_KEY) {
+            console.log('[LLM Router] Falling back to Grok...');
+            return queryGrokAgent(messages, tools);
+        }
+
+        if (config.OPENAI_API_KEY) {
+            console.log('[LLM Router] Falling back to OpenAI...');
+            try {
+                const prompt = messages[messages.length - 1].content;
+                const text = typeof prompt === 'string' ? prompt : JSON.stringify(prompt);
+                const answer = await queryOnlineModel(text);
+                return { answer: JSON.stringify({ message: answer }), confidence: 1.0 };
+            } catch (e) {
+                console.error('[LLM Router] OpenAI fallback failed:', e);
+            }
+        }
+
+        console.error('General Agent failed and no online fallback available:', error);
         appendLog('General Agent (Ollama)', { messages: mappedMessages, tools }, null, error);
-        throw error; // Throws to Fastify which yields 500 properly, allowing agent-neo to fallback
+        throw error; // Last resort 500
     }
 }
 
