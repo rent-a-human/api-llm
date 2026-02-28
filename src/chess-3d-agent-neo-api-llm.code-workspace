@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "../../../../vibe-code-projects/chess-3d"
+		},
+		{
+			"path": "../../../agent-neo"
+		},
+		{
+			"path": ".."
+		}
+	],
+	"settings": {}
+}

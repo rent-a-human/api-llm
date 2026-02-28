@@ -1,0 +1,19 @@
+node_modules
+dist
+dist-ssr
+*.local
+frontend
+dist
+.env
+frontend/*
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

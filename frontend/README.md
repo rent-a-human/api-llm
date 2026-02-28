@@ -1,0 +1,7 @@
+The purpose of this project is to create a tool that will try to fulfill user request at its satisfaction. From solving Jira tickets, to building a native IOS app, it can do whatever tasks no matter how complex or simple they are. Tasks can take some time, specially complex multi step ones, but we've got the time, and we will improve. Our main goal is to beat one of the most ancient problems humans have faced.
+
+This agent will help to make that dream a reality, helping other humans to do their tasks, and in the process, we will improve our agent to be able to do more complex tasks, and in the end, we will be able to do whatever tasks no matter how complex or simple they are.
+
+We believe in a future where the barrier between thought and execution is dissolved. By delegating the mechanical and repetitive aspects of creation to our agent, we empower individuals to focus on the essence of their ideas. This synergy allows for a level of productivity and innovation previously thought impossible, as the agent learns and adapts to the unique nuances of every challenge it encounters.
+
+As we iterate and refine our models, we move closer to a state of pure potentiality. Each task completed is not just a solution to a problem, but a step toward a more profound understanding of human intent. Our journey is one of continuous transcendence, aiming to create a tool that doesn't just assist, but truly understands and anticipates the needs of its users, fostering a world where every vision can find its form.
