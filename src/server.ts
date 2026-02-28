@@ -244,10 +244,9 @@ import crypto from 'crypto';
 const activeConnections = new Map<string, { transport: SSEServerTransport, server: any }>();
 
 app.get('/mcp/sse', async (request: FastifyRequest, reply: FastifyReply) => {
-    // Priority 1: Check if client already provided a sessionId in the query (common for some MCP clients)
-    // Priority 2: Generate a new UUID
-    const sessionId = (request.query as any).sessionId || crypto.randomUUID();
-    console.log(`[MCP] SSE Connection Attempt. Session: ${sessionId}`);
+    // Standard MCP flow: Server assigns a fresh UUID
+    const sessionId = crypto.randomUUID();
+    console.log(`[MCP] SSE Connection Attempt. Assigned Session: ${sessionId}`);
 
     // Hijack the underlying raw socket to prevent Fastify from eagerly closing it
     reply.hijack();
@@ -272,8 +271,13 @@ app.get('/mcp/sse', async (request: FastifyRequest, reply: FastifyReply) => {
     };
 
     // Create a new Transport and Server instance for this specific client
-    // We pass the sessionId back in the endpoint to ensure the client keeps using the same one
-    const transport = new SSEServerTransport(`/mcp/message?sessionId=${sessionId}`, rawRes as any);
+    // CRITICAL: We use an absolute URL for the message endpoint to prevent cross-domain resolution errors
+    const protocol = request.headers['x-forwarded-proto'] || 'http';
+    const host = request.headers.host;
+    const absoluteEndpoint = `${protocol}://${host}/mcp/message?sessionId=${sessionId}`;
+
+    console.log(`[MCP] Sending absolute endpoint: ${absoluteEndpoint}`);
+    const transport = new SSEServerTransport(absoluteEndpoint, rawRes as any);
     const serverInstance = createServer();
 
     // Track the connection BEFORE connecting to ensure the map is populated immediately
@@ -297,16 +301,20 @@ app.get('/mcp/sse', async (request: FastifyRequest, reply: FastifyReply) => {
         }
     }, 15000);
 
-    // If the client disconnects, clean up this specific session 
+    // If the client disconnects, clean up this specific session after a small grace period
     request.raw.on('close', () => {
-        console.log(`[MCP] Client disconnected: ${sessionId}`);
+        console.log(`[MCP] Client connection closed (socket): ${sessionId}`);
         clearInterval(keepAlive);
 
-        const session = activeConnections.get(sessionId);
-        if (session) {
-            session.server.close().catch((err: any) => console.error(`[MCP] Error closing server for ${sessionId}:`, err));
-            activeConnections.delete(sessionId);
-        }
+        // We wait 3 seconds before deleting to handle rapid reconnects or POST/SSE race conditions
+        setTimeout(() => {
+            const session = activeConnections.get(sessionId);
+            if (session) {
+                console.log(`[MCP] Cleaning up expired session: ${sessionId}`);
+                session.server.close().catch((err: any) => console.error(`[MCP] Error closing server for ${sessionId}:`, err));
+                activeConnections.delete(sessionId);
+            }
+        }, 3000);
     });
 });
 
