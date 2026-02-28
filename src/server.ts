@@ -250,8 +250,27 @@ app.get('/mcp/sse', async (request: FastifyRequest, reply: FastifyReply) => {
     // Hijack the underlying raw socket to prevent Fastify from eagerly closing it
     reply.hijack();
 
+    // Manually inject CORS headers into the raw response because SSEServerTransport hardcodes its own
+    const rawRes = reply.raw;
+    const originalWriteHead = rawRes.writeHead.bind(rawRes);
+    (rawRes as any).writeHead = (statusCode: number, statusMessage?: any, headers?: any) => {
+        // Handle both (statusCode, headers) and (statusCode, statusMessage, headers) signatures
+        let finalHeaders = typeof statusMessage === 'object' ? statusMessage : headers;
+        finalHeaders = {
+            ...finalHeaders,
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        };
+        if (typeof statusMessage === 'string') {
+            return originalWriteHead(statusCode, statusMessage, finalHeaders);
+        } else {
+            return originalWriteHead(statusCode, finalHeaders);
+        }
+    };
+
     // Create a new Transport and Server instance for this specific client
-    const transport = new SSEServerTransport(`/mcp/message?sessionId=${sessionId}`, reply.raw);
+    const transport = new SSEServerTransport(`/mcp/message?sessionId=${sessionId}`, rawRes as any);
     const serverInstance = createServer();
     await serverInstance.connect(transport);
 
