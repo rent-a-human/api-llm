@@ -244,9 +244,10 @@ import crypto from 'crypto';
 const activeConnections = new Map<string, { transport: SSEServerTransport, server: any }>();
 
 app.get('/mcp/sse', async (request: FastifyRequest, reply: FastifyReply) => {
-    // Standard MCP flow: Server assigns a fresh UUID
-    const sessionId = crypto.randomUUID();
-    console.log(`[MCP] SSE Connection Attempt. Assigned Session: ${sessionId}`);
+    // Priority 1: Honor the sessionId if the client already choose one (common for agent-neo)
+    // Priority 2: Fallback to a fresh UUID
+    const sessionId = (request.query as any).sessionId || crypto.randomUUID();
+    console.log(`[MCP] SSE Connection Attempt. Target Session: ${sessionId}`);
 
     // Hijack the underlying raw socket to prevent Fastify from eagerly closing it
     reply.hijack();
