@@ -238,14 +238,16 @@ app.post('/chess-reason', async (request: FastifyRequest, reply: FastifyReply) =
 // MCP Server Integration
 // ============================================================================
 import { createServer, SSEServerTransport } from './mcp/server';
+import crypto from 'crypto';
 
 // Map of sessionId -> { transport, server }
 const activeConnections = new Map<string, { transport: SSEServerTransport, server: any }>();
 
 app.get('/mcp/sse', async (request: FastifyRequest, reply: FastifyReply) => {
-    // Generate a unique session ID for this browser tab
-    const sessionId = Math.random().toString(36).substring(7);
-    console.log(`[MCP] Client Connected to SSE. Assigned Session: ${sessionId}`);
+    // Priority 1: Check if client already provided a sessionId in the query (common for some MCP clients)
+    // Priority 2: Generate a new UUID
+    const sessionId = (request.query as any).sessionId || crypto.randomUUID();
+    console.log(`[MCP] SSE Connection Attempt. Session: ${sessionId}`);
 
     // Hijack the underlying raw socket to prevent Fastify from eagerly closing it
     reply.hijack();
@@ -270,12 +272,14 @@ app.get('/mcp/sse', async (request: FastifyRequest, reply: FastifyReply) => {
     };
 
     // Create a new Transport and Server instance for this specific client
+    // We pass the sessionId back in the endpoint to ensure the client keeps using the same one
     const transport = new SSEServerTransport(`/mcp/message?sessionId=${sessionId}`, rawRes as any);
     const serverInstance = createServer();
     await serverInstance.connect(transport);
 
     // Track the connection
     activeConnections.set(sessionId, { transport, server: serverInstance });
+    console.log(`[MCP] Session ${sessionId} fully established and mapped.`);
 
     // Keep-alive heartbeat to prevent reverse proxies (e.g., Railway, NGINX) from terminating idle connections
     const keepAlive = setInterval(() => {
@@ -293,7 +297,7 @@ app.get('/mcp/sse', async (request: FastifyRequest, reply: FastifyReply) => {
 
         const session = activeConnections.get(sessionId);
         if (session) {
-            session.server.close().catch(console.error);
+            session.server.close().catch((err: any) => console.error(`[MCP] Error closing server for ${sessionId}:`, err));
             activeConnections.delete(sessionId);
         }
     });
@@ -301,16 +305,19 @@ app.get('/mcp/sse', async (request: FastifyRequest, reply: FastifyReply) => {
 
 app.post('/mcp/message', async (request: FastifyRequest, reply: FastifyReply) => {
     const sessionId = (request.query as any).sessionId;
+    console.log(`[MCP] POST Message for Session: ${sessionId}`);
 
     if (!sessionId || !activeConnections.has(sessionId)) {
-        console.warn(`[MCP] Rejected message: Missing or expired session (${sessionId})`);
+        console.warn(`[MCP] 404 Rejected: Session ${sessionId} not found in active map. Size: ${activeConnections.size}`);
+        console.log(`[MCP] Current Active Sessions: ${Array.from(activeConnections.keys()).join(', ')}`);
         return reply.status(404).send({ error: "Session not found or expired" });
     }
 
-    const { transport } = activeConnections.get(sessionId)!;
+    const session = activeConnections.get(sessionId);
+    if (!session) return reply.status(404).send({ error: "Session disappeared" });
 
     try {
-        await transport.handleMessage(request.body as any);
+        await session.transport.handleMessage(request.body as any);
         return reply.status(202).send("Accepted");
     } catch (error) {
         console.error(`[MCP] Error handling message for ${sessionId}:`, error);
