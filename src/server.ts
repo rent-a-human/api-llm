@@ -275,11 +275,18 @@ app.get('/mcp/sse', async (request: FastifyRequest, reply: FastifyReply) => {
     // We pass the sessionId back in the endpoint to ensure the client keeps using the same one
     const transport = new SSEServerTransport(`/mcp/message?sessionId=${sessionId}`, rawRes as any);
     const serverInstance = createServer();
-    await serverInstance.connect(transport);
 
-    // Track the connection
+    // Track the connection BEFORE connecting to ensure the map is populated immediately
     activeConnections.set(sessionId, { transport, server: serverInstance });
-    console.log(`[MCP] Session ${sessionId} fully established and mapped.`);
+    console.log(`[MCP] [DEBUG] Session ${sessionId} mapped. Total active sessions: ${activeConnections.size}`);
+
+    try {
+        await serverInstance.connect(transport);
+        console.log(`[MCP] [DEBUG] Session ${sessionId} fully connected to transport.`);
+    } catch (err: any) {
+        console.error(`[MCP] [CRITICAL] Failed to connect server for session ${sessionId}:`, err);
+        activeConnections.delete(sessionId);
+    }
 
     // Keep-alive heartbeat to prevent reverse proxies (e.g., Railway, NGINX) from terminating idle connections
     const keepAlive = setInterval(() => {
@@ -305,22 +312,26 @@ app.get('/mcp/sse', async (request: FastifyRequest, reply: FastifyReply) => {
 
 app.post('/mcp/message', async (request: FastifyRequest, reply: FastifyReply) => {
     const sessionId = (request.query as any).sessionId;
-    console.log(`[MCP] POST Message for Session: ${sessionId}`);
+    const bodySize = JSON.stringify(request.body).length;
+    console.log(`[MCP] [DEBUG] Incoming POST for Session: [${sessionId}] (Size: ${bodySize} bytes)`);
 
-    if (!sessionId || !activeConnections.has(sessionId)) {
-        console.warn(`[MCP] 404 Rejected: Session ${sessionId} not found in active map. Size: ${activeConnections.size}`);
-        console.log(`[MCP] Current Active Sessions: ${Array.from(activeConnections.keys()).join(', ')}`);
-        return reply.status(404).send({ error: "Session not found or expired" });
+    if (!sessionId) {
+        console.warn(`[MCP] [ERROR] POST missing sessionId query parameter.`);
+        return reply.status(400).send({ error: "Missing sessionId" });
     }
 
     const session = activeConnections.get(sessionId);
-    if (!session) return reply.status(404).send({ error: "Session disappeared" });
+    if (!session) {
+        console.warn(`[MCP] [404] Session ${sessionId} NOT FOUND in map.`);
+        console.log(`[MCP] [VERBOSE] Known Sessions in memory: [${Array.from(activeConnections.keys()).join(', ')}]`);
+        return reply.status(404).send({ error: "Session not found or expired" });
+    }
 
     try {
         await session.transport.handleMessage(request.body as any);
         return reply.status(202).send("Accepted");
-    } catch (error) {
-        console.error(`[MCP] Error handling message for ${sessionId}:`, error);
+    } catch (error: any) {
+        console.error(`[MCP] [ERROR] Internal error handling message for ${sessionId}:`, error.message);
         return reply.status(500).send({ error: "Failed to handle message" });
     }
 });
