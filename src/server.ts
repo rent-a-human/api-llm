@@ -237,30 +237,28 @@ app.post('/chess-reason', async (request: FastifyRequest, reply: FastifyReply) =
 // ============================================================================
 // MCP Server Integration
 // ============================================================================
-import { server, SSEServerTransport } from './mcp/server';
+import { createServer, SSEServerTransport } from './mcp/server';
 
-let transport: SSEServerTransport;
+// Map of sessionId -> { transport, server }
+const activeConnections = new Map<string, { transport: SSEServerTransport, server: any }>();
 
-// Disable the explicit register block to restore Fastify's default JSON parsing
 app.get('/mcp/sse', async (request: FastifyRequest, reply: FastifyReply) => {
-    console.log('[MCP] Connected to SSE');
+    // Generate a unique session ID for this browser tab
+    const sessionId = Math.random().toString(36).substring(7);
+    console.log(`[MCP] Client Connected to SSE. Assigned Session: ${sessionId}`);
 
     // Hijack the underlying raw socket to prevent Fastify from eagerly closing it
     reply.hijack();
 
-    if (transport) {
-        try {
-            // Unbind the previous active transport from the singleton server
-            await server.close();
-        } catch (e) {
-            console.error('[MCP] Error closing previous server connection:', e);
-        }
-    }
+    // Create a new Transport and Server instance for this specific client
+    const transport = new SSEServerTransport(`/mcp/message?sessionId=${sessionId}`, reply.raw);
+    const serverInstance = createServer();
+    await serverInstance.connect(transport);
 
-    transport = new SSEServerTransport('/mcp/message', reply.raw);
-    await server.connect(transport);
+    // Track the connection
+    activeConnections.set(sessionId, { transport, server: serverInstance });
 
-    // Keep-alive heartbeat to prevent Vite proxy and NGINX from dropping idle connections
+    // Keep-alive heartbeat to prevent reverse proxies (e.g., Railway, NGINX) from terminating idle connections
     const keepAlive = setInterval(() => {
         try {
             reply.raw.write(':\n\n');
@@ -269,27 +267,35 @@ app.get('/mcp/sse', async (request: FastifyRequest, reply: FastifyReply) => {
         }
     }, 15000);
 
-    // If the client disconnects, clean up
+    // If the client disconnects, clean up this specific session 
     request.raw.on('close', () => {
-        console.log('[MCP] Client disconnected');
+        console.log(`[MCP] Client disconnected: ${sessionId}`);
         clearInterval(keepAlive);
+
+        const session = activeConnections.get(sessionId);
+        if (session) {
+            session.server.close().catch(console.error);
+            activeConnections.delete(sessionId);
+        }
     });
 });
 
 app.post('/mcp/message', async (request: FastifyRequest, reply: FastifyReply) => {
-    console.log('[MCP] Message received');
-    if (transport) {
-        try {
-            // Fastify has automatically parsed the JSON body into request.body
-            // We pass it directly to the internal message handler, bypassing the SDK's raw stream fetcher
-            await transport.handleMessage(request.body as any);
-            return reply.status(202).send("Accepted");
-        } catch (error) {
-            console.error('[MCP] Error handling message:', error);
-            return reply.status(500).send({ error: "Failed to handle message" });
-        }
-    } else {
-        return reply.status(500).send({ error: "Transport not initialized" });
+    const sessionId = (request.query as any).sessionId;
+
+    if (!sessionId || !activeConnections.has(sessionId)) {
+        console.warn(`[MCP] Rejected message: Missing or expired session (${sessionId})`);
+        return reply.status(404).send({ error: "Session not found or expired" });
+    }
+
+    const { transport } = activeConnections.get(sessionId)!;
+
+    try {
+        await transport.handleMessage(request.body as any);
+        return reply.status(202).send("Accepted");
+    } catch (error) {
+        console.error(`[MCP] Error handling message for ${sessionId}:`, error);
+        return reply.status(500).send({ error: "Failed to handle message" });
     }
 });
 
