@@ -240,8 +240,8 @@ app.post('/chess-reason', async (request: FastifyRequest, reply: FastifyReply) =
 import { createServer, SSEServerTransport } from './mcp/server';
 import crypto from 'crypto';
 
-// Map of sessionId -> { transport, server }
-const activeConnections = new Map<string, { transport: SSEServerTransport, server: any }>();
+// Map of sessionId -> { transport, server, ids }
+const activeConnections = new Map<string, { transport: SSEServerTransport, server: any, ids: Set<string> }>();
 
 app.get('/mcp/sse', async (request: FastifyRequest, reply: FastifyReply) => {
     // Priority 1: Honor the sessionId if the client already choose one (common for agent-neo)
@@ -281,8 +281,9 @@ app.get('/mcp/sse', async (request: FastifyRequest, reply: FastifyReply) => {
     const transport = new SSEServerTransport(absoluteEndpoint, rawRes as any);
     const serverInstance = createServer();
 
-    // Track the connection BEFORE connecting to ensure the map is populated immediately
-    activeConnections.set(sessionId, { transport, server: serverInstance });
+    // Store metadata to handle cleanup of multiple aliases
+    const sessionData = { transport, server: serverInstance, ids: new Set([sessionId]) };
+    activeConnections.set(sessionId, sessionData);
     console.log(`[MCP] [DEBUG] Session ${sessionId} mapped. Total active sessions: ${activeConnections.size}`);
 
     try {
@@ -309,11 +310,14 @@ app.get('/mcp/sse', async (request: FastifyRequest, reply: FastifyReply) => {
 
         // We wait 3 seconds before deleting to handle rapid reconnects or POST/SSE race conditions
         setTimeout(() => {
-            const session = activeConnections.get(sessionId);
-            if (session) {
-                console.log(`[MCP] Cleaning up expired session: ${sessionId}`);
-                session.server.close().catch((err: any) => console.error(`[MCP] Error closing server for ${sessionId}:`, err));
-                activeConnections.delete(sessionId);
+            const data = activeConnections.get(sessionId);
+            if (data) {
+                console.log(`[MCP] Cleaning up session and its aliases: ${Array.from(data.ids).join(', ')}`);
+                data.server.close().catch((err: any) => console.error(`[MCP] Error closing server:`, err));
+                // Remove all IDs pointing to this session
+                for (const id of data.ids) {
+                    activeConnections.delete(id);
+                }
             }
         }, 3000);
     });
@@ -335,6 +339,7 @@ app.post('/mcp/message', async (request: FastifyRequest, reply: FastifyReply) =>
         const onlySessionId = activeConnections.keys().next().value as string;
         const onlySession = activeConnections.get(onlySessionId)!;
         console.log(`[MCP] [HEAL] Mapping orphan POST session [${sessionId}] to active SSE session [${onlySessionId}]`);
+        onlySession.ids.add(sessionId as string); // Track alias
         activeConnections.set(sessionId as string, onlySession);
         session = onlySession;
     }
@@ -347,7 +352,10 @@ app.post('/mcp/message', async (request: FastifyRequest, reply: FastifyReply) =>
     }
 
     try {
-        await session.transport.handlePostMessage(request.raw, reply.raw);
+        // Fastify already parsed the body, so we use handleMessage directly.
+        // This is more stable than handlePostMessage which tries to re-parse the raw stream.
+        await session.transport.handleMessage(body);
+        return reply.status(202).send("Accepted");
     } catch (err: any) {
         console.error(`[MCP] [ERROR] Failed to handle message for session ${sessionId}:`, err);
         return reply.status(500).send({ error: "Failed to process message" });
