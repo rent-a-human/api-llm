@@ -270,12 +270,37 @@ export function createServer() {
           let targetPath = path.isAbsolute(filePathOrUrl) ? filePathOrUrl : path.join(process.cwd(), filePathOrUrl);
 
           if (!fsSync.existsSync(targetPath)) {
-            // Fallback: Check in the uploads directory if it's just a filename or an incorrect path
+            // Fallback 1: Check in the uploads directory
             const fileName = path.basename(filePathOrUrl);
             const uploadPath = path.join(process.cwd(), 'uploads', fileName);
             console.error(`[MCP Tool Exec] File not found at ${targetPath}. Trying fallback: ${uploadPath}`);
             if (fsSync.existsSync(uploadPath)) {
               targetPath = uploadPath;
+            } else {
+              // Fallback 2: Exhaustive recursive search in process.cwd()
+              console.error(`[MCP Tool Exec] Fallback 1 failed. Starting exhaustive search for: ${fileName}`);
+              const searchFile = async (dir: string): Promise<string | null> => {
+                const entries = await fs.readdir(dir, { withFileTypes: true });
+                for (const entry of entries) {
+                  const fullPath = path.join(dir, entry.name);
+                  if (entry.isDirectory()) {
+                    if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'dist') continue;
+                    const found = await searchFile(fullPath);
+                    if (found) return found;
+                  } else if (entry.name.toLowerCase() === fileName.toLowerCase()) {
+                    return fullPath;
+                  }
+                }
+                return null;
+              };
+
+              const foundPath = await searchFile(process.cwd());
+              if (foundPath) {
+                console.error(`[MCP Tool Exec] EXHAUSTIVE SEARCH FOUND: ${foundPath}`);
+                targetPath = foundPath;
+              } else {
+                console.error(`[MCP Tool Exec] EXHAUSTIVE SEARCH FAILED to find: ${fileName}`);
+              }
             }
           }
 

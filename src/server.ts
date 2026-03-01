@@ -112,7 +112,8 @@ app.post('/upload', async (request: FastifyRequest, reply: FastifyReply) => {
                 }
                 const savePath = path.join(uploadsDir, part.filename);
                 fs.writeFileSync(savePath, buffer);
-                console.log(`[API] /upload Saved PDF to: ${savePath}`);
+                console.log(`[API] /upload ABSOLUTE SAVE PATH: ${path.resolve(savePath)}`);
+                console.log(`[API] /upload EXPR SAVE PATH: ${savePath}`);
             }
 
             if (part.mimetype === 'application/pdf') {
