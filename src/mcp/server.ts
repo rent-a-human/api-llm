@@ -6,6 +6,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import Fastify from "fastify";
 import fs from "fs/promises";
+import fsSync from "fs";
 import path from "path";
 import { exec } from "child_process";
 import { promisify } from "util";
@@ -266,7 +267,18 @@ export function createServer() {
           const arrayBuffer = await res.arrayBuffer();
           buffer = Buffer.from(arrayBuffer);
         } else {
-          const targetPath = path.isAbsolute(filePathOrUrl) ? filePathOrUrl : path.join(process.cwd(), filePathOrUrl);
+          let targetPath = path.isAbsolute(filePathOrUrl) ? filePathOrUrl : path.join(process.cwd(), filePathOrUrl);
+
+          if (!fsSync.existsSync(targetPath)) {
+            // Fallback: Check in the uploads directory if it's just a filename or an incorrect path
+            const fileName = path.basename(filePathOrUrl);
+            const uploadPath = path.join(process.cwd(), 'uploads', fileName);
+            console.error(`[MCP Tool Exec] File not found at ${targetPath}. Trying fallback: ${uploadPath}`);
+            if (fsSync.existsSync(uploadPath)) {
+              targetPath = uploadPath;
+            }
+          }
+
           buffer = await fs.readFile(targetPath);
         }
 

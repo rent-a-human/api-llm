@@ -5,6 +5,8 @@ import config from './config';
 import { routeRequest, queryChessAgent, queryReasoningModel, queryChessReasoningModel, queryGeneralAgent, queryGrokAgent } from './services/llm-router';
 import multipart from '@fastify/multipart';
 import { extractPdfPayload } from './services/pdf-service';
+import fs from 'fs';
+import path from 'path';
 
 // Initialize Fastify
 const app: FastifyInstance = Fastify({
@@ -101,6 +103,17 @@ app.post('/upload', async (request: FastifyRequest, reply: FastifyReply) => {
 
         for await (const part of files) {
             const buffer = await part.toBuffer();
+
+            // Save PDF to disk so MCP tools can access it by path later
+            if (part.mimetype === 'application/pdf') {
+                const uploadsDir = path.join(process.cwd(), 'uploads');
+                if (!fs.existsSync(uploadsDir)) {
+                    fs.mkdirSync(uploadsDir, { recursive: true });
+                }
+                const savePath = path.join(uploadsDir, part.filename);
+                fs.writeFileSync(savePath, buffer);
+                console.log(`[API] /upload Saved PDF to: ${savePath}`);
+            }
 
             if (part.mimetype === 'application/pdf') {
                 console.log(`[API] /upload Processing PDF: ${part.filename} (${buffer.length} bytes)`);
