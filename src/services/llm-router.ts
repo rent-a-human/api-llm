@@ -384,7 +384,18 @@ export async function queryGeneralAgent(messages: any[], tools?: any[]): Promise
         return finalAns;
 
     } catch (error: any) {
-        console.warn('[LLM Router] Ollama failure. [Fallback Disabled for Debugging]', error.message);
+        console.warn('[LLM Router] Ollama failure, attempting online fallback for /agent...', error.message);
+
+        // If it's a connection error (ECONNREFUSED) or we just want to be resilient in the cloud:
+        if (config.GROK_API_KEY) {
+            console.log('[LLM Router] Falling back to Grok...');
+            try {
+                return await queryGrokAgent(messages, tools);
+            } catch (grokError: any) {
+                console.error('[LLM Router] Grok fallback failed:', grokError.message);
+            }
+        }
+
         console.error('General Agent failed and no online fallback available:', error);
         appendLog('General Agent (Ollama)', { messages: mappedMessages, tools }, null, error);
         throw error; // Last resort 500
