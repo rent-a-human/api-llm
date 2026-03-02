@@ -325,11 +325,36 @@ export async function queryGeneralAgent(messages: any[], tools?: any[]): Promise
         return msg;
     });
 
+    const hasImages = mappedMessages.some(m => m.images && m.images.length > 0);
+
     try {
+        // If images are present and we are using a non-vision reasoning model,
+        // we might want to skip Ollama or force a vision model.
+        // For now, let Ollama try, but if it's the cloud reasoning model without vision, it will likely fail.
+        if (hasImages && config.REASONING_MODEL.includes('minimax')) {
+            console.warn('[LLM Router] Images detected but using non-vision reasoning model. Forcing fallback...');
+            throw new Error("Non-vision model fallback");
+        }
+
+        let formattedTools = undefined;
+        if (tools && tools.length > 0) {
+            formattedTools = tools.map((t: any) => {
+                if (t.type === 'function') return t;
+                return {
+                    type: "function",
+                    function: {
+                        name: t.name,
+                        description: t.description,
+                        parameters: t.inputSchema || { type: "object", properties: {}, required: [] }
+                    }
+                };
+            });
+        }
+
         const response = await ollama.chat({
             model: config.REASONING_MODEL,
             messages: mappedMessages,
-            tools: tools && tools.length > 0 ? tools : undefined,
+            tools: formattedTools,
             stream: false,
         });
 
@@ -359,26 +384,7 @@ export async function queryGeneralAgent(messages: any[], tools?: any[]): Promise
         return finalAns;
 
     } catch (error: any) {
-        console.warn('[LLM Router] Ollama failure, attempting online fallback for /agent...');
-
-        // If it's a connection error (ECONNREFUSED) or we just want to be resilient in the cloud:
-        if (config.GROK_API_KEY) {
-            console.log('[LLM Router] Falling back to Grok...');
-            return queryGrokAgent(messages, tools);
-        }
-
-        if (config.OPENAI_API_KEY) {
-            console.log('[LLM Router] Falling back to OpenAI...');
-            try {
-                const prompt = messages[messages.length - 1].content;
-                const text = typeof prompt === 'string' ? prompt : JSON.stringify(prompt);
-                const answer = await queryOnlineModel(text);
-                return { answer: JSON.stringify({ message: answer }), confidence: 1.0 };
-            } catch (e) {
-                console.error('[LLM Router] OpenAI fallback failed:', e);
-            }
-        }
-
+        console.warn('[LLM Router] Ollama failure. [Fallback Disabled for Debugging]', error.message);
         console.error('General Agent failed and no online fallback available:', error);
         appendLog('General Agent (Ollama)', { messages: mappedMessages, tools }, null, error);
         throw error; // Last resort 500
@@ -403,7 +409,20 @@ export async function queryGrokAgent(messages: any[], tools?: any[]): Promise<{ 
         };
 
         if (tools && tools.length > 0) {
-            payload.tools = tools;
+            payload.tools = tools.map((t: any) => {
+                // If already formatted as OpenAI spec (e.g. orchestrator tools), leave it
+                if (t.type === 'function') return t;
+
+                // Map MCP raw format to OpenAI spec
+                return {
+                    type: "function",
+                    function: {
+                        name: t.name,
+                        description: t.description,
+                        parameters: t.inputSchema || { type: "object", properties: {}, required: [] }
+                    }
+                };
+            });
         }
 
         const response = await fetch("https://api.x.ai/v1/chat/completions", {

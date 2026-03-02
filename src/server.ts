@@ -3,6 +3,8 @@ import cors from '@fastify/cors';
 import { z } from 'zod';
 import config from './config';
 import { routeRequest, queryChessAgent, queryReasoningModel, queryChessReasoningModel, queryGeneralAgent, queryGrokAgent } from './services/llm-router';
+import { taskQueue } from './workflows/queue';
+import './workflows/orchestrator'; // Auto-starts background worker
 import multipart from '@fastify/multipart';
 import { extractPdfPayload } from './services/pdf-service';
 import fs from 'fs';
@@ -174,6 +176,52 @@ app.post('/ask', async (request: FastifyRequest, reply: FastifyReply) => {
             success: false,
             error: "Internal Server Error",
         });
+    }
+});
+
+// Endpoint: POST /tasks (Add new background task)
+app.post('/tasks', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+        const schema = z.object({
+            description: z.string().min(1, "Description cannot be empty"),
+            level: z.number().optional().default(0)
+        });
+        const { description, level } = schema.parse(request.body);
+        const id = taskQueue.addTask(description, level);
+        return reply.status(200).send({ success: true, id });
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return reply.status(400).send({ success: false, error: "Validation Error", details: error.errors });
+        }
+        return reply.status(500).send({ success: false, error: "Internal Server Error" });
+    }
+});
+
+// Endpoint: GET /tasks (List all tasks)
+app.get('/tasks', async (request: FastifyRequest, reply: FastifyReply) => {
+    return reply.status(200).send({ success: true, tasks: taskQueue.getAllTasks() });
+});
+
+// Endpoint: POST /tasks/:id/respond (Provide human answer to BLOCKED task)
+app.post('/tasks/:id/respond', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    try {
+        const schema = z.object({
+            response: z.string().min(1, "Response cannot be empty")
+        });
+        const { id } = request.params;
+        const { response } = schema.parse(request.body);
+
+        const success = taskQueue.provideHumanResponse(id, response);
+        if (success) {
+            return reply.status(200).send({ success: true });
+        } else {
+            return reply.status(404).send({ success: false, error: "Task not found or not BLOCKED" });
+        }
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return reply.status(400).send({ success: false, error: "Validation Error", details: error.errors });
+        }
+        return reply.status(500).send({ success: false, error: "Internal Server Error" });
     }
 });
 
@@ -356,6 +404,17 @@ app.post('/mcp/message', async (request: FastifyRequest, reply: FastifyReply) =>
         onlySession.ids.add(sessionId as string); // Track alias
         activeConnections.set(sessionId as string, onlySession);
         session = onlySession;
+    }
+
+    // NEW FALLBACK: If multiple connections exist, but we have an un-aliased connection 
+    // that was just created recently, map to it. We just grab the last added connection.
+    if (!session && activeConnections.size > 0) {
+        const fallbackSessionId = Array.from(activeConnections.keys()).pop() as string;
+        const fallbackSession = activeConnections.get(fallbackSessionId)!;
+        console.log(`[MCP] [HEAL-MULTIPLE] Mapping orphan POST session [${sessionId}] to latest SSE session [${fallbackSessionId}]`);
+        fallbackSession.ids.add(sessionId as string);
+        activeConnections.set(sessionId as string, fallbackSession);
+        session = fallbackSession;
     }
 
     if (!session) {

@@ -59,7 +59,7 @@ async function testPdfHybrid(filePath) {
         console.log(`Fallback: Returning ${pageImages.length} images for Visual OCR.`);
         console.log(`Preview Image 1 Length: ${pageImages[0].length}`);
     } else {
-        console.log("Extracted Text Preview:", fullText.slice(0, 500) + "...");
+        console.log("Extracted  the Text Preview:", fullText.slice(0, 500) + "...");
     }
 }
 
