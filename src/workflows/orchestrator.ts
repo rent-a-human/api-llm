@@ -81,7 +81,7 @@ class Orchestrator {
             const allTools = [...backendTools, ...orchestratorTools];
 
             let loopCount = 0;
-            const MAX_LOOPS = 25;
+            const MAX_LOOPS = 50;
             let finalResultStr = "";
 
             while (loopCount < MAX_LOOPS) {
