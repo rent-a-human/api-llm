@@ -435,6 +435,74 @@ app.post('/mcp/message', async (request: FastifyRequest, reply: FastifyReply) =>
     }
 });
 
+import archiver from 'archiver';
+
+// Endpoint: POST /download (Zips a requested directory and streams it back)
+app.post('/download', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+        const body = request.body as { directoryPath: string };
+        const dirPath = body?.directoryPath;
+
+        if (!dirPath || typeof dirPath !== 'string') {
+            return reply.status(400).send({ success: false, error: "directoryPath is required" });
+        }
+
+        const absolutePath = path.resolve(dirPath);
+
+        if (!fs.existsSync(absolutePath)) {
+            return reply.status(404).send({ success: false, error: "Directory not found on server" });
+        }
+
+        // Set headers for file download
+        reply.header('Content-Type', 'application/zip');
+        reply.header('Content-Disposition', `attachment; filename="${path.basename(absolutePath)}.zip"`);
+
+        const archive = archiver('zip', {
+            zlib: { level: 9 } // Maximum compression
+        });
+
+        archive.on('error', function (err) {
+            throw err;
+        });
+
+        // Pipe archive data to the fastify reply stream
+        reply.send(archive);
+
+        // Append files from the directory, ignoring node_modules
+        archive.glob('**/*', { cwd: absolutePath, ignore: ['node_modules/**'] });
+
+        // Finalize the archive (we are done appending files and it will finish the stream)
+        archive.finalize();
+
+        // Fastify automatically handles the streaming reply
+        return reply;
+
+    } catch (error: any) {
+        request.log.error(error);
+        return reply.status(500).send({ success: false, error: error.message });
+    }
+});
+
+// Endpoint: GET /supermarket (Serves the actual deployed tar.gz file directly)
+app.get('/supermarket', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+        const filePath = path.resolve(process.cwd(), 'supermarket-app.tar.gz');
+
+        if (!fs.existsSync(filePath)) {
+            return reply.status(404).send({ success: false, error: "supermarket-app.tar.gz not found on server" });
+        }
+
+        reply.header('Content-Type', 'application/gzip');
+        reply.header('Content-Disposition', 'attachment; filename="supermarket-app.tar.gz"');
+
+        const stream = fs.createReadStream(filePath);
+        return reply.send(stream);
+    } catch (error: any) {
+        request.log.error(error);
+        return reply.status(500).send({ success: false, error: error.message });
+    }
+});
+
 // Start Server
 const start = async () => {
     try {
