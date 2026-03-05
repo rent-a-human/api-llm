@@ -13,6 +13,8 @@ const configSchema = z.object({
     OPENAI_MODEL: z.string().default('gpt-3.5-turbo'),
     CONFIDENCE_THRESHOLD: z.string().default('0.7').transform(Number),
     GROK_API_KEY: z.string().optional(),
+    GEMINI_API_KEY: z.string().optional(),
+    CLAUDE_API_KEY: z.string().optional(),
 });
 
 const config = configSchema.parse(process.env);

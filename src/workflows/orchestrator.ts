@@ -45,10 +45,16 @@ class Orchestrator {
                 task.blockedReason = undefined;
             }
 
-            const messages = [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: task.description }
-            ];
+            const messages: Array<{
+                role: string;
+                content: string | any[];
+                tool_calls?: any[];
+                tool_call_id?: string;
+                name?: string;
+            }> = [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: task.description }
+                ];
 
             // Provide a custom tool specific to the Orchestrator loop so the agent can ask for help
             const orchestratorTools = [{
@@ -86,21 +92,43 @@ class Orchestrator {
 
             while (loopCount < MAX_LOOPS) {
                 loopCount++;
-                taskQueue.addLog(task.id, `Querying General Agent (turn ${loopCount})...`);
+                let currentQueryPayload = "No recent messages";
+                if (messages.length > 0) {
+                    const latestMessage = messages[messages.length - 1];
+                    currentQueryPayload = typeof latestMessage.content === 'string' ? latestMessage.content : JSON.stringify(latestMessage.content);
+                    // Also log tool calls if any
+                    if (latestMessage.tool_calls) {
+                        currentQueryPayload += `\nTool Calls: ${JSON.stringify(latestMessage.tool_calls)}`;
+                    }
+                }
+
+                taskQueue.addLog(task.id, `Querying General Agent (turn ${loopCount})...\nPayload:\n${currentQueryPayload}`);
                 const result = await queryGeneralAgent(messages, allTools);
 
                 let displayMsg = typeof result === 'string' ? result : JSON.stringify(result);
                 let parsedAns: any = {};
+
+                // ans might have toolMessage from the router
+                let toolMessage: any = undefined;
+                let toolCallId: string | undefined = undefined;
+                let thinking: string | undefined = undefined;
+                let contentMetadata: string | undefined = undefined;
 
                 try {
                     let answerObj = typeof (result as any)?.answer === 'string' ? (result as any).answer : displayMsg;
                     try {
                         parsedAns = JSON.parse(answerObj);
                         if (parsedAns.message) displayMsg = parsedAns.message;
+                        toolMessage = parsedAns.toolMessage || (result as any).toolMessage;
+                        toolCallId = parsedAns.toolCallId || (result as any).toolCallId;
+                        if (toolMessage) {
+                            thinking = toolMessage.thinking;
+                            contentMetadata = toolMessage.content;
+                        }
                     } catch (e) {
                         displayMsg = answerObj;
                     }
-                    taskQueue.addLog(task.id, `Received response from General Agent: ${displayMsg}`);
+                    taskQueue.addLog(task.id, `Received response from General Agent: ${displayMsg}`, thinking, contentMetadata);
                 } catch (e) {
                     taskQueue.addLog(task.id, `Received response from General Agent.`);
                 }
@@ -155,19 +183,59 @@ class Orchestrator {
                     }
 
                     try {
-                        taskQueue.addLog(task.id, `Executing backend tool: ${action.name}...`);
+                        let payloadString = "";
+                        try {
+                            payloadString = action.payload ? JSON.stringify(action.payload, null, 2) : "";
+                        } catch (e) { }
+
+                        taskQueue.addLog(task.id, `Executing backend tool: ${action.name}...${payloadString ? '\n' + payloadString : ''}`);
                         const toolResult = await executeBackendTool(action.name, action.payload);
 
                         let toolOutput = Array.isArray(toolResult?.content) ? toolResult.content.map((c: any) => c.text).join('\n') : JSON.stringify(toolResult);
+                        const MAX_OUTPUT_LENGTH = 8000;
+                        if (toolOutput && toolOutput.length > MAX_OUTPUT_LENGTH) {
+                            toolOutput = toolOutput.substring(0, MAX_OUTPUT_LENGTH) + `\n\n...[OUTPUT TRUNCATED - exceeded ${MAX_OUTPUT_LENGTH} chars]...`;
+                        }
+
+                        let uiToolOutput = toolOutput;
+                        if (uiToolOutput && uiToolOutput.length > 500) {
+                            uiToolOutput = uiToolOutput.substring(0, 500) + '\n... [truncated for UI]';
+                        }
+                        taskQueue.addLog(task.id, `Tool ${action.name} completed.\nOutput:\n${uiToolOutput}`);
+
+                        // IMPORTANT: We must push the ASSISTANT's tool call request first, then the TOOL's response.
+                        if (toolMessage) {
+                            // Ensure the toolMessage has the proper role and structure
+                            messages.push({
+                                role: 'assistant',
+                                content: toolMessage.content || "",
+                                tool_calls: toolMessage.tool_calls
+                            });
+                        }
+
+                        // Then push the TOOL response
                         messages.push({
-                            role: 'user',
-                            content: `[SYSTEM MESSAGE]: The tool action you requested (${action.name}) has been completed.\n\nTOOL RESULT DATA:\n${toolOutput}\n\nCRITICAL INSTRUCTION: Analyze the result and continue working towards the objective. DO NOT STOP until the entire task is solved.`
+                            role: 'tool',
+                            tool_call_id: toolCallId || action.name,
+                            name: action.name,
+                            content: `TOOL RESULT DATA:\n${toolOutput}\n\nCRITICAL INSTRUCTION: Analyze the result and continue working towards the objective. DO NOT STOP until the entire task is solved.`
                         });
                         continue;
                     } catch (err: any) {
                         taskQueue.addLog(task.id, `Tool execution failed: ${err.message}`);
+
+                        if (toolMessage) {
+                            messages.push({
+                                role: 'assistant',
+                                content: toolMessage.content || "",
+                                tool_calls: toolMessage.tool_calls
+                            });
+                        }
+
                         messages.push({
-                            role: 'user',
+                            role: 'tool',
+                            tool_call_id: toolCallId || action.name,
+                            name: action.name,
                             content: `[SYSTEM MESSAGE]: The tool action you requested (${action.name}) FAILED with error: ${err.message}. Please try a different approach or fix the arguments.`
                         });
                         continue;

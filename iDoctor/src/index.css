@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+  
+  body {
+    @apply bg-gray-50 text-gray-900;
+  }
+}
+
+@layer components {
+  .medical-card {
+    @apply bg-white rounded-lg shadow-md p-6 border border-gray-200;
+  }
+  
+  .medical-button {
+    @apply bg-medical-blue hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-md transition duration-200;
+  }
+  
+  .medical-button-secondary {
+    @apply bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded-md transition duration-200;
+  }
+  
+  .stat-card {
+    @apply medical-card text-center;
+  }
+  
+  .stat-number {
+    @apply text-3xl font-bold text-medical-blue;
+  }
+  
+  .stat-label {
+    @apply text-sm text-gray-600 mt-1;
+  }
+}

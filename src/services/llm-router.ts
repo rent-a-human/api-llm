@@ -1,5 +1,6 @@
 import { Ollama } from 'ollama';
 import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
 import config from '../config';
 import fs from 'fs';
 import path from 'path';
@@ -31,6 +32,7 @@ function appendLog(modelName: string, requestPayload: any, responsePayload: any,
 const ollama = new Ollama({ host: config.OLLAMA_HOST }); // Timeout config not supported in constructor, need to check docs or use fetch. However, ollama-js might handle it or we need to increase fastify timeout.
 // Correction: ollama-js request method supports options? No, it's simpler. We rely on the server keeping connection open.
 const openai = config.OPENAI_API_KEY ? new OpenAI({ apiKey: config.OPENAI_API_KEY }) : null;
+const claude = config.CLAUDE_API_KEY ? new Anthropic({ apiKey: config.CLAUDE_API_KEY }) : null;
 
 interface LLMResponse {
     answer: string;
@@ -369,7 +371,9 @@ export async function queryGeneralAgent(messages: any[], tools?: any[]): Promise
             };
             const finalAns = {
                 answer: JSON.stringify({ message: "Executing tool...", action: action }),
-                confidence: 1.0
+                confidence: 1.0,
+                toolMessage: message,
+                toolCallId: toolCall.function.name // Ollama uses function names or internal IDs depending on version, fallback to object if needed
             };
             appendLog('General Agent (Ollama)', { messages: mappedMessages, tools }, finalAns);
             return finalAns;
@@ -384,19 +388,34 @@ export async function queryGeneralAgent(messages: any[], tools?: any[]): Promise
         return finalAns;
 
     } catch (error: any) {
-        console.warn('[LLM Router] Ollama failure, attempting online fallback for /agent...', error.message);
+        console.warn('[LLM Router] Ollama failure, attempting online fallback cascade for /agent...', error.message);
 
-        // If it's a connection error (ECONNREFUSED) or we just want to be resilient in the cloud:
+        // Fallback Cascade: Grok -> Gemini -> OpenAI -> Claude
         if (config.GROK_API_KEY) {
             console.log('[LLM Router] Falling back to Grok...');
-            try {
-                return await queryGrokAgent(messages, tools);
-            } catch (grokError: any) {
-                console.error('[LLM Router] Grok fallback failed:', grokError.message);
-            }
+            try { return await queryGrokAgent(messages, tools); }
+            catch (e: any) { console.error('[LLM Router] Grok fallback failed:', e.message); }
         }
 
-        console.error('General Agent failed and no online fallback available:', error);
+        if (config.GEMINI_API_KEY) {
+            console.log('[LLM Router] Falling back to Gemini...');
+            try { return await queryGeminiAgent(messages, tools); }
+            catch (e: any) { console.error('[LLM Router] Gemini fallback failed:', e.message); }
+        }
+
+        if (config.OPENAI_API_KEY) {
+            console.log('[LLM Router] Falling back to OpenAI...');
+            try { return await queryOpenAIAgent(messages, tools); }
+            catch (e: any) { console.error('[LLM Router] OpenAI fallback failed:', e.message); }
+        }
+
+        if (config.CLAUDE_API_KEY) {
+            console.log('[LLM Router] Falling back to Claude...');
+            try { return await queryClaudeAgent(messages, tools); }
+            catch (e: any) { console.error('[LLM Router] Claude fallback failed:', e.message); }
+        }
+
+        console.error('General Agent failed and no online fallback succeeded:', error);
         appendLog('General Agent (Ollama)', { messages: mappedMessages, tools }, null, error);
         throw error; // Last resort 500
     }
@@ -464,7 +483,9 @@ export async function queryGrokAgent(messages: any[], tools?: any[]): Promise<{ 
             };
             const finalAns = {
                 answer: JSON.stringify({ message: "Executing tool...", action: action }),
-                confidence: 1.0
+                confidence: 1.0,
+                toolMessage: message,
+                toolCallId: toolCall.id
             };
             appendLog('Grok Agent', payload, finalAns);
             return finalAns;
@@ -481,6 +502,213 @@ export async function queryGrokAgent(messages: any[], tools?: any[]): Promise<{ 
     } catch (error) {
         console.error('Grok Agent failed:', error);
         appendLog('Grok Agent', { messages, tools }, null, error);
+        throw error;
+    }
+}
+
+export async function queryGeminiAgent(messages: any[], tools?: any[]): Promise<{ answer: string; confidence: number }> {
+    console.log('[LLM Router] Gemini Agent Request');
+    if (!config.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY not configured.");
+
+    try {
+        const resolvedMessages = await resolveDocumentPayloads(messages);
+        const payload: any = {
+            messages: resolvedMessages,
+            model: "gemini-2.5-flash",
+            stream: false,
+            temperature: 0
+        };
+
+        if (tools && tools.length > 0) {
+            payload.tools = tools.map((t: any) => {
+                if (t.type === 'function') return t;
+                return {
+                    type: "function",
+                    function: {
+                        name: t.name,
+                        description: t.description,
+                        parameters: t.inputSchema || { type: "object", properties: {}, required: [] }
+                    }
+                };
+            });
+        }
+
+        const response = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+            method: 'POST',
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${config.GEMINI_API_KEY}`
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) throw new Error(`Gemini Error: ${response.status} - ${await response.text()}`);
+
+        const data = await response.json();
+        const message = data.choices[0].message;
+
+        if (message.tool_calls && message.tool_calls.length > 0) {
+            const toolCall = message.tool_calls[0];
+            const action = {
+                name: toolCall.function.name,
+                payload: typeof toolCall.function.arguments === 'string' ? JSON.parse(toolCall.function.arguments) : toolCall.function.arguments
+            };
+            const finalAns = { answer: JSON.stringify({ message: "Executing tool...", action }), confidence: 1.0, toolMessage: message, toolCallId: toolCall.id };
+            appendLog('Gemini Agent', payload, finalAns);
+            return finalAns;
+        }
+
+        const finalAns = { answer: JSON.stringify({ message: message.content }), confidence: 1.0 };
+        appendLog('Gemini Agent', payload, finalAns);
+        return finalAns;
+    } catch (error) {
+        console.error('Gemini Agent failed:', error);
+        throw error;
+    }
+}
+
+export async function queryOpenAIAgent(messages: any[], tools?: any[]): Promise<{ answer: string; confidence: number }> {
+    console.log('[LLM Router] OpenAI Agent Request');
+    if (!config.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not configured.");
+
+    try {
+        const resolvedMessages = await resolveDocumentPayloads(messages);
+        const payload: any = {
+            messages: resolvedMessages,
+            model: config.OPENAI_MODEL || "gpt-4o-mini",
+            stream: false,
+            temperature: 0
+        };
+
+        if (tools && tools.length > 0) {
+            payload.tools = tools.map((t: any) => {
+                if (t.type === 'function') return t;
+                return {
+                    type: "function",
+                    function: {
+                        name: t.name,
+                        description: t.description,
+                        parameters: t.inputSchema || { type: "object", properties: {}, required: [] }
+                    }
+                };
+            });
+        }
+
+        const response = await fetch("https://api.openai.com/v1/chat/completions", {
+            method: 'POST',
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${config.OPENAI_API_KEY}`
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) throw new Error(`OpenAI Error: ${response.status} - ${await response.text()}`);
+
+        const data = await response.json();
+        const message = data.choices[0].message;
+
+        if (message.tool_calls && message.tool_calls.length > 0) {
+            const toolCall = message.tool_calls[0];
+            const action = {
+                name: toolCall.function.name,
+                payload: typeof toolCall.function.arguments === 'string' ? JSON.parse(toolCall.function.arguments) : toolCall.function.arguments
+            };
+            const finalAns = { answer: JSON.stringify({ message: "Executing tool...", action }), confidence: 1.0, toolMessage: message, toolCallId: toolCall.id };
+            appendLog('OpenAI Agent', payload, finalAns);
+            return finalAns;
+        }
+
+        const finalAns = { answer: JSON.stringify({ message: message.content }), confidence: 1.0 };
+        appendLog('OpenAI Agent', payload, finalAns);
+        return finalAns;
+    } catch (error) {
+        console.error('OpenAI Agent failed:', error);
+        throw error;
+    }
+}
+
+export async function queryClaudeAgent(messages: any[], tools?: any[]): Promise<{ answer: string; confidence: number }> {
+    console.log('[LLM Router] Claude Agent Request');
+    if (!claude) throw new Error("CLAUDE_API_KEY not configured.");
+
+    try {
+        const resolvedMessages = await resolveDocumentPayloads(messages);
+
+        let systemPrompt = "";
+        const anthropicMessages: any[] = [];
+
+        for (const msg of resolvedMessages) {
+            if (msg.role === 'system') {
+                systemPrompt += msg.content + "\\n";
+            } else if (msg.role === 'assistant' && msg.tool_calls) {
+                const toolCall = msg.tool_calls[0];
+                anthropicMessages.push({
+                    role: 'assistant',
+                    content: [
+                        { type: 'text', text: msg.content || "Calling tool..." },
+                        {
+                            type: 'tool_use',
+                            id: toolCall.id,
+                            name: toolCall.function.name,
+                            input: typeof toolCall.function.arguments === 'string' ? JSON.parse(toolCall.function.arguments) : toolCall.function.arguments
+                        }
+                    ]
+                });
+            } else if (msg.role === 'tool') {
+                anthropicMessages.push({
+                    role: 'user',
+                    content: [
+                        { type: 'tool_result', tool_use_id: msg.tool_call_id, content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content) }
+                    ]
+                });
+            } else {
+                anthropicMessages.push({
+                    role: msg.role === 'assistant' ? 'assistant' : 'user',
+                    content: msg.content
+                });
+            }
+        }
+
+        const payload: any = {
+            model: "claude-3-7-sonnet-20250219",
+            max_tokens: 4000,
+            system: systemPrompt.trim() !== "" ? systemPrompt : undefined,
+            messages: anthropicMessages,
+        };
+
+        if (tools && tools.length > 0) {
+            payload.tools = tools.map((t: any) => ({
+                name: t.name,
+                description: t.description || "",
+                input_schema: t.inputSchema || { type: "object", properties: {}, required: [] }
+            }));
+        }
+
+        const response = await claude.messages.create(payload);
+
+        const toolUseBlock = response.content.find((c: any) => c.type === 'tool_use') as any;
+        if (toolUseBlock) {
+            const action = {
+                name: toolUseBlock.name,
+                payload: toolUseBlock.input
+            };
+            const finalAns = {
+                answer: JSON.stringify({ message: "Executing tool...", action }),
+                confidence: 1.0,
+                toolMessage: { role: 'assistant', content: null, tool_calls: [{ id: toolUseBlock.id, type: 'function', function: { name: toolUseBlock.name, arguments: JSON.stringify(toolUseBlock.input) } }] },
+                toolCallId: toolUseBlock.id
+            };
+            appendLog('Claude Agent', payload, finalAns);
+            return finalAns;
+        }
+
+        const textBlock = response.content.find((c: any) => c.type === 'text') as any;
+        const finalAns = { answer: JSON.stringify({ message: textBlock ? textBlock.text : "" }), confidence: 1.0 };
+        appendLog('Claude Agent', payload, finalAns);
+        return finalAns;
+    } catch (error) {
+        console.error('Claude Agent failed:', error);
         throw error;
     }
 }

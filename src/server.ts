@@ -106,32 +106,36 @@ app.post('/upload', async (request: FastifyRequest, reply: FastifyReply) => {
         for await (const part of files) {
             const buffer = await part.toBuffer();
 
-            // Save PDF to disk so MCP tools can access it by path later
-            if (part.mimetype === 'application/pdf') {
-                const uploadsDir = path.join(process.cwd(), 'uploads');
-                if (!fs.existsSync(uploadsDir)) {
-                    fs.mkdirSync(uploadsDir, { recursive: true });
-                }
-                const savePath = path.join(uploadsDir, part.filename);
-                fs.writeFileSync(savePath, buffer);
-                console.log(`[API] /upload ABSOLUTE SAVE PATH: ${path.resolve(savePath)}`);
-                console.log(`[API] /upload EXPR SAVE PATH: ${savePath}`);
+            // Save ALL files to disk so MCP tools can access them by path later
+            const uploadsDir = path.join(process.cwd(), 'uploads');
+            if (!fs.existsSync(uploadsDir)) {
+                fs.mkdirSync(uploadsDir, { recursive: true });
             }
 
+            // Generate a safe unique filename to prevent overwrites
+            const safeName = `${Date.now()}-${part.filename.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+            const savePath = path.join(uploadsDir, safeName);
+            fs.writeFileSync(savePath, buffer);
+            const serverPath = `uploads/${safeName}`; // Relative path for MCP tools
+
+            console.log(`[API] /upload Saved file to: ${savePath}`);
+
             if (part.mimetype === 'application/pdf') {
-                console.log(`[API] /upload Processing PDF: ${part.filename} (${buffer.length} bytes)`);
+                console.log(`[API] /upload Processing PDF for text: ${part.filename} (${buffer.length} bytes)`);
                 const pdfData = await extractPdfPayload(buffer);
                 results.push({
                     filename: part.filename,
+                    serverPath, // Expose relative server path for MCP tool usage
                     mimeType: part.mimetype,
                     extractedText: pdfData.text,
-                    images: pdfData.images, // Only populated if scanned document
+                    images: pdfData.images,
                     isScanned: pdfData.isScanned
                 });
             } else {
-                // Fallback for non-PDFs (e.g., standard images). Just return as Base64.
+                // Return path + Base64 fallback for other non-PDF files
                 results.push({
                     filename: part.filename,
+                    serverPath, // Expose relative server path for MCP tool usage
                     mimeType: part.mimetype,
                     base64Data: buffer.toString('base64')
                 });
@@ -477,6 +481,51 @@ app.post('/download', async (request: FastifyRequest, reply: FastifyReply) => {
         // Fastify automatically handles the streaming reply
         return reply;
 
+    } catch (error: any) {
+        request.log.error(error);
+        return reply.status(500).send({ success: false, error: error.message });
+    }
+});
+
+// Endpoint: POST /download-file (Streams a single specific file for download)
+app.post('/download-file', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+        const body = request.body as { filePath: string };
+        const reqPath = body?.filePath;
+
+        if (!reqPath || typeof reqPath !== 'string') {
+            return reply.status(400).send({ success: false, error: "filePath is required" });
+        }
+
+        // The user might send a full file:// URI or an absolute path. Clean it up.
+        let cleanPath = reqPath;
+        if (cleanPath.startsWith('file://')) {
+            cleanPath = cleanPath.replace('file://', '');
+        }
+
+        const absolutePath = path.resolve(cleanPath);
+
+        if (!fs.existsSync(absolutePath)) {
+            return reply.status(404).send({ success: false, error: "File not found on server" });
+        }
+
+        const stat = fs.statSync(absolutePath);
+        if (!stat.isFile()) {
+            return reply.status(400).send({ success: false, error: "Path does not point to a file" });
+        }
+
+        const fileName = path.basename(absolutePath);
+        let mimeType = 'application/octet-stream';
+        if (fileName.endsWith('.pdf')) mimeType = 'application/pdf';
+        if (fileName.endsWith('.png')) mimeType = 'image/png';
+        if (fileName.endsWith('.jpg') || fileName.endsWith('.jpeg')) mimeType = 'image/jpeg';
+
+        reply.header('Content-Type', mimeType);
+        reply.header('Content-Disposition', `attachment; filename="${fileName}"`);
+        reply.header('Content-Length', stat.size.toString());
+
+        const stream = fs.createReadStream(absolutePath);
+        return reply.send(stream);
     } catch (error: any) {
         request.log.error(error);
         return reply.status(500).send({ success: false, error: error.message });

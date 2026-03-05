@@ -39,26 +39,43 @@ export const backendTools = [
           type: "string",
           description: "The path to the file to read (e.g. 'package.json' or '/etc/hosts')",
         },
+        rangeToShow: {
+          type: "array",
+          items: { type: "number" },
+          description: "Optional 1-indexed line range [startLine, endLine] to only read a specific section of the file. Extremely useful for large files to save context.",
+        }
       },
       required: ["filePath"],
     },
   },
   {
     name: "write_backend_file",
-    description: "Writes content to a file on the backend server's file system. Takes an absolute or relative path and the content to write. Overwrites the file if it expects.",
+    description: "Writes or modifies content in a file on the backend server's file system. Can either overwrite the entire file using 'content', or make precise multi-line replacements using 'edits'.",
     inputSchema: {
       type: "object",
       properties: {
         filePath: {
           type: "string",
-          description: "The path to the file to write to",
+          description: "The path to the file to modify",
         },
         content: {
           type: "string",
-          description: "The content to write into the file",
+          description: "The full content to write. If 'edits' is provided, this property is IGNORED.",
         },
+        edits: {
+          type: "array",
+          description: "An array of precise edits to make. The file will be read, and every targetText found will be replaced with replacementText. This is HIGHLY recommended to save token context bandwidth instead of rewriting an entire file just to change one line.",
+          items: {
+            type: "object",
+            properties: {
+              targetText: { type: "string" },
+              replacementText: { type: "string" }
+            },
+            required: ["targetText", "replacementText"]
+          }
+        }
       },
-      required: ["filePath", "content"],
+      required: ["filePath"],
     },
   },
   {
@@ -198,6 +215,28 @@ export const backendTools = [
         }
       },
       required: ["description"]
+    }
+  },
+  {
+    name: "sign_pdf_document",
+    description: "Digitally signs a PDF document by placing a signature image at the correct location based on the signer's name and signing line detection.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        pdfFile: {
+          type: "string",
+          description: "Path to the PDF file to be signed (absolute or relative path)"
+        },
+        signerName: {
+          type: "string",
+          description: "Name of the person who needs to sign the document"
+        },
+        signatureImage: {
+          type: "string",
+          description: "Path to the signature image file (PNG, JPG, etc.)"
+        }
+      },
+      required: ["pdfFile", "signerName", "signatureImage"]
     }
   }
 ];
@@ -364,7 +403,7 @@ export async function executeBackendTool(name: string, args: any): Promise<any> 
   }
 
   if (name === "read_backend_file") {
-    const { filePath } = args as { filePath: string };
+    const { filePath, rangeToShow } = args as { filePath: string, rangeToShow?: number[] | string };
 
     try {
       const targetPath = path.resolve(process.cwd(), filePath);
@@ -374,7 +413,25 @@ export async function executeBackendTool(name: string, args: any): Promise<any> 
         throw new Error(`Access denied. You cannot read files outside the api-llm project root. Requested: ${targetPath}`);
       }
 
-      const content = await fs.readFile(targetPath, "utf-8");
+      let content = await fs.readFile(targetPath, "utf-8");
+
+      if (rangeToShow) {
+        try {
+          let range = typeof rangeToShow === 'string' ? JSON.parse(rangeToShow) : rangeToShow;
+          if (Array.isArray(range) && range.length >= 2) {
+            const lines = content.split('\n');
+            const start = Math.max(1, range[0]) - 1; // 1-indexed to 0-indexed
+            const end = Math.min(lines.length, range[1]);
+
+            if (start < lines.length) {
+              let sliced = lines.slice(start, end).map((line, idx) => `${start + 1 + idx}: ${line}`).join('\n');
+              content = `[Showing lines ${start + 1} to ${end} of ${lines.length} total lines]\n\n${sliced}`;
+            }
+          }
+        } catch (e) {
+          console.error("Failed to parse rangeToShow:", e);
+        }
+      }
 
       return {
         content: [
@@ -398,7 +455,7 @@ export async function executeBackendTool(name: string, args: any): Promise<any> 
   }
 
   if (name === "write_backend_file") {
-    const { filePath, content } = args as { filePath: string; content: string };
+    const { filePath, content, edits } = args as { filePath: string; content?: string, edits?: Array<{ targetText: string, replacementText: string }> };
 
     try {
       const targetPath = path.resolve(process.cwd(), filePath);
@@ -410,16 +467,39 @@ export async function executeBackendTool(name: string, args: any): Promise<any> 
 
       // Ensure the directory exists before writing
       await fs.mkdir(path.dirname(targetPath), { recursive: true });
-      await fs.writeFile(targetPath, content, "utf-8");
 
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Successfully wrote to ${filePath}`,
-          },
-        ],
-      };
+      if (edits && edits.length > 0) {
+        // Precision editing mode
+        let fileContent = await fs.readFile(targetPath, "utf-8");
+        for (const edit of edits) {
+          if (!fileContent.includes(edit.targetText)) {
+            throw new Error(`Could not find targetText in file: ${edit.targetText.substring(0, 50)}... Make sure it matches exactly.`);
+          }
+          fileContent = fileContent.replace(edit.targetText, edit.replacementText);
+        }
+        await fs.writeFile(targetPath, fileContent, "utf-8");
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Successfully executed ${edits.length} precise edits in ${filePath}`,
+            },
+          ],
+        };
+      } else if (content !== undefined) {
+        // Full overwrite mode
+        await fs.writeFile(targetPath, content, "utf-8");
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Successfully overwrote ${filePath}`,
+            },
+          ],
+        };
+      } else {
+        throw new Error("You must provide either 'content' or 'edits'.");
+      }
     } catch (error: any) {
       return {
         isError: true,
@@ -710,6 +790,58 @@ export async function executeBackendTool(name: string, args: any): Promise<any> 
         isError: true,
         content: [{ type: "text", text: `Failed to generate directory tree: ${error.message}` }]
       }
+    }
+  }
+
+  if (name === "sign_pdf_document") {
+    const { pdfFile, signerName, signatureImage } = args as {
+      pdfFile: string;
+      signerName: string;
+      signatureImage: string;
+    };
+
+    try {
+      // Import the PDF signature service
+      const { pdfSignatureService } = await import('../services/pdf-signature-service');
+
+      // Call the signature service
+      const result = await pdfSignatureService.signPdfDocument(
+        pdfFile,
+        signerName,
+        signatureImage
+      );
+
+      if (result.success) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Successfully signed PDF document. Download URL: ${result.downloadUrl} - Signature placed at page ${result.signaturePosition?.page}, position (${result.signaturePosition?.x}, ${result.signaturePosition?.y}) - Digital certificate: Signer: ${result.certificateInfo?.signer}, Timestamp: ${result.certificateInfo?.timestamp}, Validity: ${result.certificateInfo?.validity ? 'Valid' : 'Invalid'}`
+            }
+          ]
+        };
+      } else {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: `Failed to sign PDF: ${result.error}`
+            }
+          ]
+        };
+      }
+
+    } catch (error: any) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Failed to sign PDF: ${error.message}`
+          }
+        ]
+      };
     }
   }
 

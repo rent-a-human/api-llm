@@ -3,6 +3,8 @@ export type TaskStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED' | 'T
 export interface TaskLog {
     timestamp: number;
     message: string;
+    thinking?: string;
+    content?: string;
 }
 
 export interface Task {
@@ -68,16 +70,16 @@ class TaskQueue {
             if (humanResponse) {
                 task.humanResponse = humanResponse;
             }
-            task.logs.push({ timestamp: Date.now(), message: `Status updated to ${status}` + (blockedReason ? ` - Reason: ${blockedReason}` : '') });
+            task.logs.push({ timestamp: Date.now(), message: `Status updated to ${status}` + (blockedReason ? ` - Reason: ${blockedReason}` : '') + (error ? `\n\n**Error Information:**\n${error}` : '') });
             return true;
         }
         return false;
     }
 
-    addLog(taskId: string, message: string) {
+    addLog(taskId: string, message: string, thinking?: string, content?: string) {
         const task = this.getTask(taskId);
         if (task) {
-            task.logs.push({ timestamp: Date.now(), message });
+            task.logs.push({ timestamp: Date.now(), message, thinking, content });
         }
     }
 
