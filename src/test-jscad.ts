@@ -20,7 +20,7 @@ polygons.forEach(poly => {
 console.log(`Z Range: ${minZ} to ${maxZ}`)
 
 // Find vertices at minZ
-let radiiAtMinZ = []
+let radiiAtMinZ: number[] = []
 polygons.forEach(poly => {
     poly.vertices.forEach(v => {
         if (Math.abs(v[2] - minZ) < 0.01) {
@@ -33,7 +33,7 @@ polygons.forEach(poly => {
 console.log(`Radii at minZ (${minZ}):`, radiiAtMinZ)
 
 // Find vertices at maxZ
-let radiiAtMaxZ = []
+let radiiAtMaxZ: number[] = []
 polygons.forEach(poly => {
     poly.vertices.forEach(v => {
         if (Math.abs(v[2] - maxZ) < 0.01) {
