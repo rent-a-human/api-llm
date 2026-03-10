@@ -1,0 +1,81 @@
+{
+  "type": "custom",
+  "name": "nut",
+  "parameters": {
+    "operations": [
+      {
+        "id": "0.1626792252588618",
+        "name": "sketch_01",
+        "type": "sketch",
+        "sketch": [
+          {
+            "id": "0.2792186835602134",
+            "type": "polygon",
+            "points": [
+              [
+                0,
+                0
+              ]
+            ],
+            "radius": 25,
+            "sides": 6
+          },
+          {
+            "id": "0.6360664293268441",
+            "type": "circle",
+            "points": [
+              [
+                0,
+                0
+              ]
+            ],
+            "radius": 10
+          }
+        ],
+        "params": {
+          "plane": "alzado"
+        },
+        "parentId": "0.5947508495513003"
+      },
+      {
+        "id": "0.5947508495513003",
+        "name": "extrude_01",
+        "type": "extrude",
+        "sketch": [
+          {
+            "id": "0.2792186835602134",
+            "type": "polygon",
+            "points": [
+              [
+                0,
+                0
+              ]
+            ],
+            "radius": 25,
+            "sides": 6
+          },
+          {
+            "id": "0.6360664293268441",
+            "type": "circle",
+            "points": [
+              [
+                0,
+                0
+              ]
+            ],
+            "radius": 10
+          }
+        ],
+        "params": {
+          "depth": 20,
+          "direction": "mid",
+          "plane": "alzado",
+          "material": "metal",
+          "opType": "add"
+        }
+      }
+    ]
+  },
+  "stlUrl": "/models/nut.stl",
+  "timestamp": "2026-03-10T18:00:42.770Z"
+}

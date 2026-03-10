@@ -299,7 +299,7 @@ async function resolveDocumentPayloads(messages: any[]): Promise<any[]> {
     return resolvedMessages;
 }
 
-export async function queryGeneralAgent(messages: any[], tools?: any[]): Promise<{ answer: string; confidence: number }> {
+export async function queryGeneralAgent(messages: any[], tools?: any[]): Promise<{ answer: string; confidence: number; modelUsed?: string }> {
     console.log('[LLM Router] General Agent Request with Native Tools');
 
     const resolvedMessages = await resolveDocumentPayloads(messages);
@@ -329,6 +329,21 @@ export async function queryGeneralAgent(messages: any[], tools?: any[]): Promise
 
     const hasImages = mappedMessages.some(m => m.images && m.images.length > 0);
 
+    let formattedTools: any = undefined;
+    if (tools && tools.length > 0) {
+        formattedTools = tools.map((t: any) => {
+            if (t.type === 'function') return t;
+            return {
+                type: "function",
+                function: {
+                    name: t.name,
+                    description: t.description,
+                    parameters: t.inputSchema || { type: "object", properties: {}, required: [] }
+                }
+            };
+        });
+    }
+
     try {
         // If images are present and we are using a non-vision reasoning model,
         // we might want to skip Ollama or force a vision model.
@@ -336,21 +351,6 @@ export async function queryGeneralAgent(messages: any[], tools?: any[]): Promise
         if (hasImages && config.REASONING_MODEL.includes('minimax')) {
             console.warn('[LLM Router] Images detected but using non-vision reasoning model. Forcing fallback...');
             throw new Error("Non-vision model fallback");
-        }
-
-        let formattedTools = undefined;
-        if (tools && tools.length > 0) {
-            formattedTools = tools.map((t: any) => {
-                if (t.type === 'function') return t;
-                return {
-                    type: "function",
-                    function: {
-                        name: t.name,
-                        description: t.description,
-                        parameters: t.inputSchema || { type: "object", properties: {}, required: [] }
-                    }
-                };
-            });
         }
 
         const response = await ollama.chat({
@@ -373,7 +373,8 @@ export async function queryGeneralAgent(messages: any[], tools?: any[]): Promise
                 answer: JSON.stringify({ message: "Executing tool...", action: action }),
                 confidence: 1.0,
                 toolMessage: message,
-                toolCallId: toolCall.function.name // Ollama uses function names or internal IDs depending on version, fallback to object if needed
+                toolCallId: toolCall.function.name, // Ollama uses function names or internal IDs depending on version, fallback to object if needed
+                modelUsed: `Ollama (${config.REASONING_MODEL})`
             };
             appendLog('General Agent (Ollama)', { messages: mappedMessages, tools }, finalAns);
             return finalAns;
@@ -382,15 +383,62 @@ export async function queryGeneralAgent(messages: any[], tools?: any[]): Promise
         // Standard Response
         const finalAns = {
             answer: JSON.stringify({ message: message.content }),
-            confidence: 1.0
+            confidence: 1.0,
+            modelUsed: `Ollama (${config.REASONING_MODEL})`
         };
         appendLog('General Agent (Ollama)', { messages: mappedMessages, tools }, finalAns);
         return finalAns;
 
     } catch (error: any) {
-        console.warn('[LLM Router] Ollama failure, attempting online fallback cascade for /agent...', error.message);
+        console.warn('[LLM Router] Ollama primary failure, entering fallback logic...', error.message);
 
-        // Fallback Cascade: Grok -> Gemini -> OpenAI -> Claude
+        if (config.FORCE_LOCAL) {
+            console.log('[LLM Router] FORCE_LOCAL is true, bypassing paid APIS and falling back to robust local models...');
+            const fallbackModel = hasImages ? config.LOCAL_VISION_MODEL : config.LOCAL_CODING_MODEL;
+            console.log(`[LLM Router] Using local fallback model: ${fallbackModel}`);
+
+            try {
+                const response = await ollama.chat({
+                    model: fallbackModel,
+                    messages: mappedMessages,
+                    tools: formattedTools,
+                    stream: false,
+                });
+
+                const message = response.message;
+
+                if (message.tool_calls && message.tool_calls.length > 0) {
+                    const toolCall = message.tool_calls[0];
+                    const action = {
+                        name: toolCall.function.name,
+                        payload: toolCall.function.arguments
+                    };
+                    const finalAns = {
+                        answer: JSON.stringify({ message: "Executing tool...", action: action }),
+                        confidence: 1.0,
+                        toolMessage: message,
+                        toolCallId: toolCall.function.name,
+                        modelUsed: `Ollama (${fallbackModel})`
+                    };
+                    appendLog(`Local Fallback Agent (${fallbackModel})`, { messages: mappedMessages, tools }, finalAns);
+                    return finalAns;
+                }
+
+                const finalAns = {
+                    answer: JSON.stringify({ message: message.content }),
+                    confidence: 1.0,
+                    modelUsed: `Ollama (${fallbackModel})`
+                };
+                appendLog(`Local Fallback Agent (${fallbackModel})`, { messages: mappedMessages, tools }, finalAns);
+                return finalAns;
+
+            } catch (localFallbackError: any) {
+                console.error(`[LLM Router] Local fallback model ${fallbackModel} failed:`, localFallbackError.message);
+                throw localFallbackError;
+            }
+        }
+
+        // Paid API Fallback Cascade: Grok -> Gemini -> OpenAI -> Claude
         if (config.GROK_API_KEY) {
             console.log('[LLM Router] Falling back to Grok...');
             try { return await queryGrokAgent(messages, tools); }
@@ -421,7 +469,7 @@ export async function queryGeneralAgent(messages: any[], tools?: any[]): Promise
     }
 }
 
-export async function queryGrokAgent(messages: any[], tools?: any[]): Promise<{ answer: string; confidence: number }> {
+export async function queryGrokAgent(messages: any[], tools?: any[]): Promise<{ answer: string; confidence: number; modelUsed?: string }> {
     console.log('[LLM Router] Grok Agent Request with Native Tools');
 
     if (!config.GROK_API_KEY) {
@@ -433,7 +481,7 @@ export async function queryGrokAgent(messages: any[], tools?: any[]): Promise<{ 
 
         const payload: any = {
             messages: resolvedMessages,
-            model: "grok-4-latest",
+            model: "grok-4-0709", //grok-4-0709 grok-4-latest
             stream: false,
             temperature: 0
         };
@@ -485,7 +533,8 @@ export async function queryGrokAgent(messages: any[], tools?: any[]): Promise<{ 
                 answer: JSON.stringify({ message: "Executing tool...", action: action }),
                 confidence: 1.0,
                 toolMessage: message,
-                toolCallId: toolCall.id
+                toolCallId: toolCall.id,
+                modelUsed: "Grok (grok-4-latest)"
             };
             appendLog('Grok Agent', payload, finalAns);
             return finalAns;
@@ -494,7 +543,8 @@ export async function queryGrokAgent(messages: any[], tools?: any[]): Promise<{ 
         // Standard Response
         const finalAns = {
             answer: JSON.stringify({ message: message.content }),
-            confidence: 1.0
+            confidence: 1.0,
+            modelUsed: "Grok (grok-4-latest)"
         };
         appendLog('Grok Agent', payload, finalAns);
         return finalAns;
@@ -506,7 +556,7 @@ export async function queryGrokAgent(messages: any[], tools?: any[]): Promise<{ 
     }
 }
 
-export async function queryGeminiAgent(messages: any[], tools?: any[]): Promise<{ answer: string; confidence: number }> {
+export async function queryGeminiAgent(messages: any[], tools?: any[]): Promise<{ answer: string; confidence: number; modelUsed?: string }> {
     console.log('[LLM Router] Gemini Agent Request');
     if (!config.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY not configured.");
 
@@ -553,12 +603,12 @@ export async function queryGeminiAgent(messages: any[], tools?: any[]): Promise<
                 name: toolCall.function.name,
                 payload: typeof toolCall.function.arguments === 'string' ? JSON.parse(toolCall.function.arguments) : toolCall.function.arguments
             };
-            const finalAns = { answer: JSON.stringify({ message: "Executing tool...", action }), confidence: 1.0, toolMessage: message, toolCallId: toolCall.id };
+            const finalAns = { answer: JSON.stringify({ message: "Executing tool...", action }), confidence: 1.0, toolMessage: message, toolCallId: toolCall.id, modelUsed: "Gemini (gemini-2.5-flash)" };
             appendLog('Gemini Agent', payload, finalAns);
             return finalAns;
         }
 
-        const finalAns = { answer: JSON.stringify({ message: message.content }), confidence: 1.0 };
+        const finalAns = { answer: JSON.stringify({ message: message.content }), confidence: 1.0, modelUsed: "Gemini (gemini-2.5-flash)" };
         appendLog('Gemini Agent', payload, finalAns);
         return finalAns;
     } catch (error) {
@@ -567,7 +617,7 @@ export async function queryGeminiAgent(messages: any[], tools?: any[]): Promise<
     }
 }
 
-export async function queryOpenAIAgent(messages: any[], tools?: any[]): Promise<{ answer: string; confidence: number }> {
+export async function queryOpenAIAgent(messages: any[], tools?: any[]): Promise<{ answer: string; confidence: number; modelUsed?: string }> {
     console.log('[LLM Router] OpenAI Agent Request');
     if (!config.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not configured.");
 
@@ -614,12 +664,12 @@ export async function queryOpenAIAgent(messages: any[], tools?: any[]): Promise<
                 name: toolCall.function.name,
                 payload: typeof toolCall.function.arguments === 'string' ? JSON.parse(toolCall.function.arguments) : toolCall.function.arguments
             };
-            const finalAns = { answer: JSON.stringify({ message: "Executing tool...", action }), confidence: 1.0, toolMessage: message, toolCallId: toolCall.id };
+            const finalAns = { answer: JSON.stringify({ message: "Executing tool...", action }), confidence: 1.0, toolMessage: message, toolCallId: toolCall.id, modelUsed: `OpenAI (${config.OPENAI_MODEL || "gpt-4o-mini"})` };
             appendLog('OpenAI Agent', payload, finalAns);
             return finalAns;
         }
 
-        const finalAns = { answer: JSON.stringify({ message: message.content }), confidence: 1.0 };
+        const finalAns = { answer: JSON.stringify({ message: message.content }), confidence: 1.0, modelUsed: `OpenAI (${config.OPENAI_MODEL || "gpt-4o-mini"})` };
         appendLog('OpenAI Agent', payload, finalAns);
         return finalAns;
     } catch (error) {
@@ -628,7 +678,7 @@ export async function queryOpenAIAgent(messages: any[], tools?: any[]): Promise<
     }
 }
 
-export async function queryClaudeAgent(messages: any[], tools?: any[]): Promise<{ answer: string; confidence: number }> {
+export async function queryClaudeAgent(messages: any[], tools?: any[]): Promise<{ answer: string; confidence: number; modelUsed?: string }> {
     console.log('[LLM Router] Claude Agent Request');
     if (!claude) throw new Error("CLAUDE_API_KEY not configured.");
 
@@ -697,14 +747,15 @@ export async function queryClaudeAgent(messages: any[], tools?: any[]): Promise<
                 answer: JSON.stringify({ message: "Executing tool...", action }),
                 confidence: 1.0,
                 toolMessage: { role: 'assistant', content: null, tool_calls: [{ id: toolUseBlock.id, type: 'function', function: { name: toolUseBlock.name, arguments: JSON.stringify(toolUseBlock.input) } }] },
-                toolCallId: toolUseBlock.id
+                toolCallId: toolUseBlock.id,
+                modelUsed: "Claude (claude-3-7-sonnet)"
             };
             appendLog('Claude Agent', payload, finalAns);
             return finalAns;
         }
 
         const textBlock = response.content.find((c: any) => c.type === 'text') as any;
-        const finalAns = { answer: JSON.stringify({ message: textBlock ? textBlock.text : "" }), confidence: 1.0 };
+        const finalAns = { answer: JSON.stringify({ message: textBlock ? textBlock.text : "" }), confidence: 1.0, modelUsed: "Claude (claude-3-7-sonnet)" };
         appendLog('Claude Agent', payload, finalAns);
         return finalAns;
     } catch (error) {

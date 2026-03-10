@@ -1,11 +1,29 @@
 import React from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
+import { getProductById } from '../data/products';
+import { useTranslation } from 'react-i18next';
 
-const ProductDetail = ({ product, onBack }) => {
+const ProductDetail = () => {
+  const { productId } = useParams();
+  const navigate = useNavigate();
   const { addToCart } = useCart();
+  const { t, i18n } = useTranslation();
+
+  const product = getProductById(productId);
 
   if (!product) {
-    return null;
+    return (
+      <div className="container" style={{ paddingTop: '2rem', textAlign: 'center' }}>
+        <h2>{t('products.empty.title')}</h2>
+        <button
+          onClick={() => navigate('/')}
+          style={{ marginTop: '1rem', padding: '0.5rem 1rem', background: '#1f2937', color: 'white', border: 'none', borderRadius: '0.25rem', cursor: 'pointer' }}
+        >
+          {t('detail.back')}
+        </button>
+      </div>
+    );
   }
 
   const handleAddToCart = () => {
@@ -14,11 +32,16 @@ const ProductDetail = ({ product, onBack }) => {
 
   const formatPrice = (price) => `$${price.toFixed(2)}`;
 
+  const isEs = i18n.language.startsWith('es');
+  const name = isEs && product.nameEs ? product.nameEs : product.name;
+  const description = isEs && product.descriptionEs ? product.descriptionEs : product.description;
+  const unit = isEs && product.unitEs ? product.unitEs : product.unit;
+
   return (
     <div className="container" style={{ paddingTop: '1.5rem', paddingBottom: '1.5rem' }}>
       {/* Back Button */}
       <button
-        onClick={onBack}
+        onClick={() => navigate(-1)}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -32,7 +55,7 @@ const ProductDetail = ({ product, onBack }) => {
         onMouseEnter={(e) => e.target.style.color = '#15803d'}
         onMouseLeave={(e) => e.target.style.color = '#16a34a'}
       >
-        ← Back to Products
+        {t('detail.back')}
       </button>
 
       <div style={{
@@ -50,7 +73,7 @@ const ProductDetail = ({ product, onBack }) => {
           <div style={{ position: 'relative' }}>
             <img
               src={product.image}
-              alt={product.name}
+              alt={name}
               style={{
                 width: '100%',
                 height: '400px',
@@ -69,12 +92,12 @@ const ProductDetail = ({ product, onBack }) => {
                 alignItems: 'center',
                 justifyContent: 'center'
               }}>
-                <span style={{ 
-                  color: 'white', 
-                  fontSize: '1.25rem', 
-                  fontWeight: '600' 
+                <span style={{
+                  color: 'white',
+                  fontSize: '1.25rem',
+                  fontWeight: '600'
                 }}>
-                  Out of Stock
+                  {t('product.out_of_stock')}
                 </span>
               </div>
             )}
@@ -82,95 +105,95 @@ const ProductDetail = ({ product, onBack }) => {
 
           {/* Product Details */}
           <div style={{ padding: '2rem' }}>
-            <h1 style={{ 
-              fontSize: '1.875rem', 
-              fontWeight: 'bold', 
+            <h1 style={{
+              fontSize: '1.875rem',
+              fontWeight: 'bold',
               color: '#1f2937',
               marginBottom: '1rem'
             }}>
-              {product.name}
+              {name}
             </h1>
-            
+
             <div style={{ marginBottom: '1.5rem' }}>
-              <span style={{ 
-                fontSize: '2.25rem', 
-                fontWeight: 'bold', 
-                color: '#16a34a' 
+              <span style={{
+                fontSize: '2.25rem',
+                fontWeight: 'bold',
+                color: '#16a34a'
               }}>
                 {formatPrice(product.price)}
               </span>
-              <span style={{ 
-                color: '#6b7280', 
-                fontSize: '1.125rem', 
-                marginLeft: '0.5rem' 
+              <span style={{
+                color: '#6b7280',
+                fontSize: '1.125rem',
+                marginLeft: '0.5rem'
               }}>
-                {product.unit}
+                {unit}
               </span>
             </div>
 
             <div style={{ marginBottom: '1.5rem' }}>
-              <h3 style={{ 
-                fontSize: '1.125rem', 
-                fontWeight: '600', 
+              <h3 style={{
+                fontSize: '1.125rem',
+                fontWeight: '600',
                 color: '#1f2937',
                 marginBottom: '0.5rem'
               }}>
-                Description
+                {t('detail.description')}
               </h3>
-              <p style={{ 
-                color: '#6b7280', 
-                lineHeight: '1.6' 
+              <p style={{
+                color: '#6b7280',
+                lineHeight: '1.6'
               }}>
-                {product.description}
+                {description}
               </p>
             </div>
 
             {/* Product Features */}
             <div style={{ marginBottom: '1.5rem' }}>
-              <h3 style={{ 
-                fontSize: '1.125rem', 
-                fontWeight: '600', 
+              <h3 style={{
+                fontSize: '1.125rem',
+                fontWeight: '600',
                 color: '#1f2937',
                 marginBottom: '0.75rem'
               }}>
-                Features
+                {t('detail.features')}
               </h3>
               <ul style={{ listStyle: 'none', padding: 0 }}>
-                <li style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
+                <li style={{
+                  display: 'flex',
+                  alignItems: 'center',
                   color: '#6b7280',
                   marginBottom: '0.5rem'
                 }}>
                   <span style={{ color: '#16a34a', marginRight: '0.5rem' }}>✓</span>
-                  Fresh and high quality
+                  {t('detail.feature.fresh')}
                 </li>
-                <li style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
+                <li style={{
+                  display: 'flex',
+                  alignItems: 'center',
                   color: '#6b7280',
                   marginBottom: '0.5rem'
                 }}>
                   <span style={{ color: '#16a34a', marginRight: '0.5rem' }}>✓</span>
-                  Carefully selected
+                  {t('detail.feature.selected')}
                 </li>
-                <li style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
+                <li style={{
+                  display: 'flex',
+                  alignItems: 'center',
                   color: '#6b7280',
                   marginBottom: '0.5rem'
                 }}>
                   <span style={{ color: '#16a34a', marginRight: '0.5rem' }}>✓</span>
-                  Best value for money
+                  {t('detail.feature.value')}
                 </li>
-                <li style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
+                <li style={{
+                  display: 'flex',
+                  alignItems: 'center',
                   color: '#6b7280',
                   marginBottom: '0.5rem'
                 }}>
                   <span style={{ color: '#16a34a', marginRight: '0.5rem' }}>✓</span>
-                  Satisfaction guaranteed
+                  {t('detail.feature.satisfaction')}
                 </li>
               </ul>
             </div>
@@ -178,7 +201,7 @@ const ProductDetail = ({ product, onBack }) => {
             {/* Add to Cart Section */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ color: '#374151', fontWeight: 500 }}>Quantity:</span>
+                <span style={{ color: '#374151', fontWeight: 500 }}>{t('detail.quantity')}</span>
                 <select style={{
                   padding: '0.5rem',
                   border: '1px solid #d1d5db',
@@ -216,15 +239,15 @@ const ProductDetail = ({ product, onBack }) => {
                 if (product.inStock) e.target.style.backgroundColor = '#16a34a';
               }}
             >
-              {product.inStock ? 'Add to Cart' : 'Out of Stock'}
+              {product.inStock ? t('product.add_to_cart') : t('product.out_of_stock')}
             </button>
 
-            <div style={{ 
-              textAlign: 'center', 
-              fontSize: '0.875rem', 
-              color: '#6b7280' 
+            <div style={{
+              textAlign: 'center',
+              fontSize: '0.875rem',
+              color: '#6b7280'
             }}>
-              🔒 Secure checkout guaranteed
+              {t('detail.secure')}
             </div>
           </div>
         </div>
@@ -245,15 +268,15 @@ const ProductDetail = ({ product, onBack }) => {
           textAlign: 'center'
         }}>
           <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🚚</div>
-          <h3 style={{ 
-            fontWeight: '600', 
+          <h3 style={{
+            fontWeight: '600',
             color: '#1f2937',
             marginBottom: '0.5rem'
           }}>
-            Fast Delivery
+            {t('detail.delivery.title')}
           </h3>
           <p style={{ fontSize: '0.875rem', color: '#6b7280' }}>
-            Free delivery on orders over $50
+            {t('detail.delivery.desc')}
           </p>
         </div>
 
@@ -265,15 +288,15 @@ const ProductDetail = ({ product, onBack }) => {
           textAlign: 'center'
         }}>
           <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>💰</div>
-          <h3 style={{ 
-            fontWeight: '600', 
+          <h3 style={{
+            fontWeight: '600',
             color: '#1f2937',
             marginBottom: '0.5rem'
           }}>
-            Best Price
+            {t('detail.price.title')}
           </h3>
           <p style={{ fontSize: '0.875rem', color: '#6b7280' }}>
-            Competitive pricing guaranteed
+            {t('detail.price.desc')}
           </p>
         </div>
 
@@ -285,15 +308,15 @@ const ProductDetail = ({ product, onBack }) => {
           textAlign: 'center'
         }}>
           <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>⭐</div>
-          <h3 style={{ 
-            fontWeight: '600', 
+          <h3 style={{
+            fontWeight: '600',
             color: '#1f2937',
             marginBottom: '0.5rem'
           }}>
-            Quality
+            {t('detail.quality.title')}
           </h3>
           <p style={{ fontSize: '0.875rem', color: '#6b7280' }}>
-            Premium quality products only
+            {t('detail.quality.desc')}
           </p>
         </div>
       </div>

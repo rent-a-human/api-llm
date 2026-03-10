@@ -18,6 +18,31 @@ import { taskQueue } from "../workflows/queue";
 
 const execPromise = promisify(exec);
 
+// CAD Integration Imports
+import { OnShapeClient } from "./cad/onshape-client";
+import { LocalCADClient } from "./cad/local-cad-client";
+import { CADAnalysisEngine } from "./cad/analysis-engine";
+import { CADCollaborationManager } from "./cad/collaboration-manager";
+
+// CAD Configuration (would normally come from environment variables)
+const CAD_CONFIG = {
+  onshape: {
+    clientId: process.env.ONSHAPE_CLIENT_ID,
+    clientSecret: process.env.ONSHAPE_CLIENT_SECRET,
+    redirectUri: process.env.ONSHAPE_REDIRECT_URI || "http://localhost:3000/callback",
+    accessKey: process.env.ONSHAPE_ACCESS_KEY,
+    secretKey: process.env.ONSHAPE_SECRET_KEY,
+    baseUrl: "https://cad.onshape.com"
+  }
+};
+
+// Initialize CAD Components
+const onshapeClient = new OnShapeClient(CAD_CONFIG.onshape);
+const localCADClient = new LocalCADClient();
+const analysisEngine = new CADAnalysisEngine(onshapeClient);
+const collaborationManager = new CADCollaborationManager(onshapeClient);
+
+
 // Extracted tools array for internal use
 export const backendTools = [
   {
@@ -238,7 +263,622 @@ export const backendTools = [
       },
       required: ["pdfFile", "signerName", "signatureImage"]
     }
+  },
+
+  // === CAD INTEGRATION TOOLS ===
+
+  {
+    name: "cad_get_onshape_auth_url",
+    description: "Get the OAuth authorization URL for OnShape CAD platform authentication",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: []
+    }
+  },
+  {
+    name: "local_cad_create_bolt",
+    description: "Generates a parametric 3D bolt locally (no Onshape API called). Use this for mass-generation or simulations. Returns a local URL for the Jarvis Dashboard.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        headWidth: { type: "number", description: "Width across flats (e.g. 19 for M12)" },
+        headHeight: { type: "number", description: "Height of the hex head" },
+        shaftDiameter: { type: "number", description: "Diameter of the shaft (e.g. 12 for M12)" },
+        shaftLength: { type: "number", description: "Length of the shaft" },
+        threadLength: { type: "number", description: "Length of the threaded portion (e.g. 50)" },
+        threadPitch: { type: "number", description: "Distance between threads (e.g. 2.54 for 10 TPI)" }
+      },
+      required: ["headWidth", "headHeight", "shaftDiameter", "shaftLength"]
+    }
+  },
+  {
+    name: "local_cad_create_nut",
+    description: "Generates a parametric 3D nut locally. Includes internal threads and professional rounding.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        width: { type: "number", description: "Width across flats (e.g. 19 for M12)" },
+        height: { type: "number", description: "Height of the nut" },
+        holeDiameter: { type: "number", description: "Diameter of the internal hole" },
+        threadPitch: { type: "number", description: "Pitch of the internal thread" }
+      },
+      required: ["width", "height", "holeDiameter"]
+    }
+  },
+  {
+    name: "local_cad_create_gear",
+    description: "Generates a parametric 3D spur gear locally.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        teeth: { type: "number", description: "Number of teeth" },
+        module: { type: "number", description: "Gear module (size factor)" },
+        thickness: { type: "number", description: "Thickness of the gear" },
+        holeDiameter: { type: "number", description: "Diameter of the center hole" }
+      },
+      required: ["teeth", "module", "thickness", "holeDiameter"]
+    }
+  },
+  {
+    name: "cad_list_documents",
+    description: "List all OnShape documents accessible to the authenticated user",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: {
+          type: "number",
+          description: "Maximum number of documents to return",
+          default: 50,
+          minimum: 1,
+          maximum: 100
+        },
+        offset: {
+          type: "number",
+          description: "Number of documents to skip",
+          default: 0,
+          minimum: 0
+        }
+      },
+      required: []
+    }
+  },
+
+  {
+    name: "cad_create_document",
+    description: "Create a new OnShape document",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Name of the document to create"
+        },
+        description: {
+          type: "string",
+          description: "Description of the document",
+          default: ""
+        },
+        units: {
+          type: "string",
+          enum: ["mm", "cm", "in", "ft"],
+          description: "Units for the document",
+          default: "mm"
+        }
+      },
+      required: ["name"]
+    }
+  },
+
+  {
+    name: "cad_create_sketch",
+    description: "Create a new sketch. 🟥 CRITICAL SPATIAL RULE: Only use 'Top' for all sketches in a single part. Using 'Top' for head and 'Front' for shaft will create a broken 90-degree bolt. STICK TO ONE PLANE.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        documentId: {
+          type: "string",
+          description: "ID of the OnShape document"
+        },
+        featureName: {
+          type: "string",
+          description: "Name for the sketch feature"
+        },
+        sketchType: {
+          type: "string",
+          description: "Plane name (e.g. 'Top', 'Front', 'Right') or a face ID",
+          default: "Top"
+        },
+        geometry: {
+          type: "array",
+          description: "Array of geometry objects. Hexagon requires [cx, cy, inradius].",
+          items: {
+            type: "object",
+            properties: {
+              type: {
+                type: "string",
+                enum: ["line", "circle", "rectangle", "arc", "spline", "hexagon"]
+              },
+              coordinates: {
+                type: "array",
+                items: { type: "number" },
+                description: "Coordinates. Hexagon: [cx, cy, inradius]."
+              },
+              properties: {
+                type: "object",
+                description: "Additional geometry properties"
+              }
+            }
+          }
+        },
+        partStudioEid: {
+          type: "string",
+          description: "Optional: Target a specific Part Studio tab ID"
+        }
+      },
+      required: ["documentId", "featureName"]
+    }
+  },
+  {
+    name: "cad_create_extrude",
+    description: "Create an extrude feature. Use 'ADD' to merge with existing bodies (e.g. bolt shaft to head).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        documentId: {
+          type: "string",
+          description: "ID of the OnShape document"
+        },
+        sketchId: {
+          type: "string",
+          description: "ID of the sketch feature to extrude"
+        },
+        distance: {
+          type: "number",
+          description: "Extrusion distance in mm"
+        },
+        direction: {
+          type: "string",
+          enum: ["positive", "negative", "both"],
+          description: "Extrusion direction",
+          default: "positive"
+        },
+        operationType: {
+          type: "string",
+          enum: ["NEW", "ADD", "REMOVE", "INTERSECT"],
+          description: "Operation: 'ADD' to merge, 'REMOVE' to subtract (holes)",
+          default: "NEW"
+        },
+        featureName: {
+          type: "string",
+          description: "Optional: Name for the extrude feature"
+        },
+        partStudioEid: {
+          type: "string",
+          description: "Optional: Target a specific Part Studio tab ID"
+        }
+      },
+      required: ["documentId", "sketchId", "distance"]
+    }
+  },
+  {
+    name: "cad_create_revolve",
+    description: "Create a revolve feature from a sketch in OnShape",
+    inputSchema: {
+      type: "object",
+      properties: {
+        documentId: {
+          type: "string",
+          description: "ID of the OnShape document"
+        },
+        sketchId: {
+          type: "string",
+          description: "ID of the sketch feature to revolve"
+        },
+        axisId: {
+          type: "string",
+          description: "ID of the sketch feature or axis to revolve around"
+        },
+        revolveType: {
+          type: "string",
+          enum: ["FULL", "ONE_WAY", "TWO_WAY", "SYMMETRIC"],
+          description: "Type of revolution",
+          default: "FULL"
+        },
+        angle: {
+          type: "number",
+          description: "Revolution angle in degrees",
+          default: 360
+        },
+        partStudioEid: {
+          type: "string",
+          description: "Optional: Target a specific Part Studio tab ID"
+        }
+      },
+      required: ["documentId", "sketchId", "axisId"]
+    }
+  },
+  {
+    name: "cad_create_sweep",
+    description: "Create a sweep feature in OnShape",
+    inputSchema: {
+      type: "object",
+      properties: {
+        documentId: {
+          type: "string",
+          description: "ID of the OnShape document"
+        },
+        profileSketchId: {
+          type: "string",
+          description: "ID of the sketch feature for the profile"
+        },
+        pathId: {
+          type: "string",
+          description: "ID of the sketch feature for the path"
+        },
+        partStudioEid: {
+          type: "string",
+          description: "Optional: Target a specific Part Studio tab ID"
+        }
+      },
+      required: ["documentId", "profileSketchId", "pathId"]
+    }
+  },
+  {
+    name: "cad_create_loft",
+    description: "Create a loft feature between multiple sketches in OnShape",
+    inputSchema: {
+      type: "object",
+      properties: {
+        documentId: {
+          type: "string",
+          description: "ID of the OnShape document"
+        },
+        profileIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "IDs of the sketch features to loft through"
+        },
+        partStudioEid: {
+          type: "string",
+          description: "Optional: Target a specific Part Studio tab ID"
+        }
+      },
+      required: ["documentId", "profileIds"]
+    }
+  },
+  {
+    name: "cad_create_plane",
+    description: "Create a construction plane in OnShape",
+    inputSchema: {
+      type: "object",
+      properties: {
+        documentId: {
+          type: "string",
+          description: "ID of the OnShape document"
+        },
+        entities: {
+          type: "array",
+          items: { type: "string" },
+          description: "List of reference entities (plane names like 'Top' or face/feature IDs)"
+        },
+        offset: {
+          type: "number",
+          description: "Offset distance in mm"
+        },
+        partStudioEid: {
+          type: "string",
+          description: "Optional: Target a specific Part Studio tab ID"
+        },
+        name: {
+          type: "string",
+          description: "Optional: Name for the construction plane"
+        }
+      },
+      required: ["documentId", "entities"]
+    }
+  },
+  {
+    name: "cad_create_fillet",
+    description: "Create a fillet feature in OnShape",
+    inputSchema: {
+      type: "object",
+      properties: {
+        documentId: {
+          type: "string",
+          description: "ID of the OnShape document"
+        },
+        entities: {
+          type: "array",
+          items: { type: "string" },
+          description: "IDs of edges or faces to fillet"
+        },
+        radius: {
+          type: "number",
+          description: "Fillet radius in mm"
+        },
+        partStudioEid: {
+          type: "string",
+          description: "Optional: Target a specific Part Studio tab ID"
+        },
+        featureName: {
+          type: "string",
+          description: "Optional: Name for the fillet feature"
+        }
+      },
+      required: ["documentId", "entities", "radius"]
+    }
+  },
+  {
+    name: "cad_create_hole",
+    description: "Create a hole feature in OnShape",
+    inputSchema: {
+      type: "object",
+      properties: {
+        documentId: {
+          type: "string",
+          description: "ID of the OnShape document"
+        },
+        locationSketchId: {
+          type: "string",
+          description: "ID of a sketch containing points for hole locations"
+        },
+        faceId: {
+          type: "string",
+          description: "ID of the face to place the hole on"
+        },
+        diameter: {
+          type: "number",
+          description: "Hole diameter in mm"
+        },
+        depth: {
+          type: "number",
+          description: "Hole depth in mm (omit for through-hole)"
+        },
+        holeType: {
+          type: "string",
+          enum: ["SIMPLE", "COUNTERBORE", "COUNTERSINK"],
+          default: "SIMPLE"
+        },
+        partStudioEid: {
+          type: "string",
+          description: "Optional: Target a specific Part Studio tab ID"
+        },
+        featureName: {
+          type: "string",
+          description: "Optional: Name for the hole feature"
+        }
+      },
+      required: ["documentId", "diameter"]
+    }
+  },
+
+  {
+    name: "cad_run_stress_analysis",
+    description: "Run finite element stress analysis on a CAD part",
+    inputSchema: {
+      type: "object",
+      properties: {
+        documentId: {
+          type: "string",
+          description: "ID of the OnShape document"
+        },
+        partId: {
+          type: "string",
+          description: "ID of the part to analyze"
+        },
+        materialProperties: {
+          type: "object",
+          description: "Material properties (youngsModulus, poissonsRatio, density, etc.)",
+          properties: {
+            name: { type: "string" },
+            youngsModulus: { type: "number" },
+            poissonsRatio: { type: "number" },
+            density: { type: "number" },
+            yieldStrength: { type: "number" },
+            tensileStrength: { type: "number" }
+          },
+          required: ["youngsModulus", "poissonsRatio"]
+        },
+        boundaryConditions: {
+          type: "array",
+          description: "Array of boundary conditions",
+          items: {
+            type: "object",
+            properties: {
+              type: {
+                type: "string",
+                enum: ["fixed", "pinned", "displacement", "force", "pressure"]
+              },
+              faces: {
+                type: "array",
+                items: { type: "string" },
+                description: "Face IDs where condition is applied"
+              },
+              values: {
+                type: "object",
+                description: "Values for the boundary condition"
+              }
+            }
+          }
+        },
+        loadCases: {
+          type: "array",
+          description: "Array of load cases to apply",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              type: {
+                type: "string",
+                enum: ["force", "pressure", "gravity", "thermal"]
+              },
+              magnitude: { type: "number" },
+              direction: {
+                type: "array",
+                items: { type: "number" },
+                description: "Load direction [x, y, z]"
+              },
+              applicationPoint: {
+                type: "array",
+                items: { type: "number" },
+                description: "Application point [x, y, z]"
+              }
+            }
+          }
+        }
+      },
+      required: ["documentId", "partId", "materialProperties"]
+    }
+  },
+
+  {
+    name: "cad_run_motion_analysis",
+    description: "Run motion analysis study on a CAD assembly",
+    inputSchema: {
+      type: "object",
+      properties: {
+        documentId: {
+          type: "string",
+          description: "ID of the OnShape document"
+        },
+        assemblyId: {
+          type: "string",
+          description: "ID of the assembly to analyze"
+        },
+        studyName: {
+          type: "string",
+          description: "Name for the motion study"
+        },
+        timeRange: {
+          type: "number",
+          description: "Duration of the analysis in seconds",
+          minimum: 0.1
+        },
+        timeSteps: {
+          type: "number",
+          description: "Number of time steps for the analysis",
+          minimum: 10,
+          maximum: 1000,
+          default: 100
+        },
+        gravity: {
+          type: "array",
+          items: { type: "number" },
+          description: "Gravity vector [x, y, z] in m/s²",
+          default: [0, 0, -9.81]
+        },
+        constraints: {
+          type: "array",
+          description: "Assembly constraints for motion analysis",
+          items: {
+            type: "object",
+            properties: {
+              type: {
+                type: "string",
+                enum: ["revolute", "prismatic", "ball", "fixed", "planar"]
+              },
+              part1: { type: "string" },
+              part2: { type: "string" },
+              origin: {
+                type: "array",
+                items: { type: "number" }
+              },
+              axis: {
+                type: "array",
+                items: { type: "number" }
+              }
+            }
+          }
+        }
+      },
+      required: ["documentId", "assemblyId", "studyName"]
+    }
+  },
+
+  {
+    name: "cad_get_analysis_status",
+    description: "Get the status of a running CAD analysis",
+    inputSchema: {
+      type: "object",
+      properties: {
+        analysisId: {
+          type: "string",
+          description: "ID of the analysis to check"
+        }
+      },
+      required: ["analysisId"]
+    }
+  },
+
+  {
+    name: "cad_share_document",
+    description: "Share an OnShape document with specific users",
+    inputSchema: {
+      type: "object",
+      properties: {
+        documentId: {
+          type: "string",
+          description: "ID of the document to share"
+        },
+        userEmails: {
+          type: "array",
+          items: { type: "string" },
+          description: "Array of email addresses to share with"
+        },
+        permissionLevel: {
+          type: "string",
+          enum: ["view", "edit", "admin"],
+          description: "Permission level for shared users",
+          default: "view"
+        },
+        message: {
+          type: "string",
+          description: "Optional message to include with the share invitation"
+        }
+      },
+      required: ["documentId", "userEmails"]
+    }
+  },
+
+  {
+    name: "cad_get_change_events",
+    description: "Get change events for a CAD document",
+    inputSchema: {
+      type: "object",
+      properties: {
+        documentId: {
+          type: "string",
+          description: "ID of the document to get events for"
+        },
+        startTime: {
+          type: "string",
+          description: "Start time for event filtering (ISO string)"
+        },
+        endTime: {
+          type: "string",
+          description: "End time for event filtering (ISO string)"
+        },
+        eventType: {
+          type: "string",
+          description: "Type of events to filter by"
+        },
+        userId: {
+          type: "string",
+          description: "User ID to filter events by"
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of events to return",
+          default: 50,
+          minimum: 1,
+          maximum: 200
+        }
+      },
+      required: ["documentId"]
+    }
   }
+
 ];
 
 // Handle Execution for both MCP Server and internal Orchestrator
@@ -845,7 +1485,523 @@ export async function executeBackendTool(name: string, args: any): Promise<any> 
     }
   }
 
-  throw new Error(`Unknown tool: ${name}`);
+  // === CAD INTEGRATION TOOLS ===
+
+  switch (name) {
+    case "cad_get_onshape_auth_url": {
+      try {
+        const authUrl = onshapeClient.getAuthorizationUrl();
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                authUrl,
+                instructions: "Visit this URL to authenticate with OnShape. After authorization, you'll receive a code to exchange for access tokens."
+              }, null, 2)
+            }
+          ]
+        };
+      } catch (error: any) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Failed to get auth URL: ${error.message}` }]
+        };
+      }
+    }
+
+    case "local_cad_create_bolt": {
+      const { headWidth, headHeight, shaftDiameter, shaftLength, threadLength, threadPitch } = args as any;
+      const result = await localCADClient.createBolt({ headWidth, headHeight, shaftDiameter, shaftLength, threadLength, threadPitch });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              message: "Local CAD bolt generated successfully",
+              ...result,
+              viewerUrl: `http://localhost:5173/agent/cad/models/${result.id}`
+            }, null, 2)
+          }
+        ]
+      };
+    }
+
+    case "local_cad_create_nut": {
+      const { width, height, holeDiameter, threadPitch } = args as any;
+      const result = await localCADClient.createNut({ width, height, holeDiameter, threadPitch });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              message: "Local CAD nut generated successfully",
+              ...result,
+              viewerUrl: `http://localhost:5173/agent/cad/models/${result.id}`
+            }, null, 2)
+          }
+        ]
+      };
+    }
+
+    case "local_cad_create_gear": {
+      const { teeth, module, thickness, holeDiameter } = args as any;
+      const result = await localCADClient.createGear({ teeth, module, thickness, holeDiameter });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              message: "Local CAD gear generated successfully",
+              ...result,
+              viewerUrl: `http://localhost:5173/agent/cad/models/${result.id}`
+            }, null, 2)
+          }
+        ]
+      };
+    }
+
+    case "cad_list_documents": {
+      const { limit = 50, offset = 0 } = args || {};
+      try {
+        const documents = await onshapeClient.listDocuments({ limit, offset });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                documents,
+                total: documents.length,
+                hasMore: documents.length === limit
+              }, null, 2)
+            }
+          ]
+        };
+      } catch (error: any) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Failed to list documents: ${error.message}` }]
+        };
+      }
+    }
+
+    case "cad_create_document": {
+      const { name: docName, description = "", units = "mm" } = args;
+      try {
+        const document = await onshapeClient.createDocument({
+          name: docName,
+          description,
+          units
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                message: `Document '${docName}' created successfully`,
+                document
+              }, null, 2)
+            }
+          ]
+        };
+      } catch (error: any) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Failed to create document: ${error.message}` }]
+        };
+      }
+    }
+
+    // Assuming SketchOptions and SketchGeometry are defined elsewhere or implicitly handled by 'args' type.
+    // If not, they would need to be added to the file.
+    // For the purpose of this edit, we are only ensuring sketchType is treated as a string.
+    // export interface SketchOptions {
+    //   featureName: string;
+    //   sketchType?: string; // e.g., 'Top', 'Front', 'Right' or a face ID
+    //   geometry?: SketchGeometry[];
+    // }
+
+    case "cad_create_sketch": {
+      const { documentId, featureName, sketchType = "Top", geometry = [], partStudioEid } = args;
+      try {
+        const sketch = await onshapeClient.createSketch(documentId, {
+          featureName,
+          sketchType,
+          geometry,
+          partStudioEid
+        });
+
+        // Spatial Awareness Check: If agent is mixing planes, warn them in the output
+        let spatialWarning = "";
+        if (sketchType.toLowerCase() === "front" || sketchType.toLowerCase() === "right") {
+          spatialWarning = "\n\n⚠️ SPATIAL WARNING: You are sketching on a vertical plane (Front/Right). If your previous features were on the 'Top' plane, this part will be TILTED 90 DEGREES. Standard hardware should use 'Top' for ALL sketches.";
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                message: `Sketch '${featureName}' created successfully${spatialWarning}`,
+                sketch
+              }, null, 2)
+            }
+          ]
+        };
+      } catch (error: any) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Failed to create sketch: ${error.message}` }]
+        };
+      }
+    }
+
+    case "cad_create_extrude": {
+      const { documentId, sketchId, distance, direction = "positive", operationType = "NEW", featureName, partStudioEid } = args;
+      try {
+        const extrude = await onshapeClient.createExtrude(documentId, {
+          sketchId,
+          distance,
+          direction,
+          operationType,
+          featureName,
+          partStudioEid
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                message: `Extrude created successfully`,
+                extrude
+              }, null, 2)
+            }
+          ]
+        };
+      } catch (error: any) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Failed to create extrude: ${error.message}` }]
+        };
+      }
+    }
+
+    case "cad_create_plane": {
+      const { documentId, entities, offset = 10, partStudioEid, name: planeName } = args;
+      try {
+        const plane = await onshapeClient.createPlane(documentId, {
+          entities,
+          offset,
+          partStudioEid,
+          name: planeName
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                message: `Plane created successfully`,
+                plane
+              }, null, 2)
+            }
+          ]
+        };
+      } catch (error: any) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Failed to create plane: ${error.message}` }]
+        };
+      }
+    }
+
+    case "cad_create_fillet": {
+      const { documentId, entities, radius, partStudioEid, featureName } = args;
+      try {
+        const fillet = await onshapeClient.createFillet(documentId, {
+          entities,
+          radius,
+          partStudioEid,
+          featureName
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                message: `Fillet created successfully`,
+                fillet
+              }, null, 2)
+            }
+          ]
+        };
+      } catch (error: any) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Failed to create fillet: ${error.message}` }]
+        };
+      }
+    }
+
+    case "cad_create_hole": {
+      const { documentId, locationSketchId, faceId, diameter, depth, holeType, partStudioEid, featureName } = args;
+      try {
+        const hole = await onshapeClient.createHole(documentId, {
+          locationSketchId,
+          faceId,
+          diameter,
+          depth,
+          holeType,
+          partStudioEid,
+          featureName
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                message: `Hole created successfully`,
+                hole
+              }, null, 2)
+            }
+          ]
+        };
+      } catch (error: any) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Failed to create hole: ${error.message}` }]
+        };
+      }
+    }
+
+    case "cad_create_revolve": {
+      const { documentId, sketchId, axisId, revolveType = "FULL", angle = 360, partStudioEid } = args;
+      try {
+        const revolve = await onshapeClient.createRevolve(documentId, {
+          sketchId,
+          axisId,
+          revolveType,
+          angle,
+          partStudioEid
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                message: `Revolve created successfully`,
+                revolve
+              }, null, 2)
+            }
+          ]
+        };
+      } catch (error: any) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Failed to create revolve: ${error.message}` }]
+        };
+      }
+    }
+
+    case "cad_create_sweep": {
+      const { documentId, profileSketchId, pathId, partStudioEid } = args;
+      try {
+        const sweep = await onshapeClient.createSweep(documentId, {
+          profileSketchId,
+          pathId,
+          partStudioEid
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                message: `Sweep created successfully`,
+                sweep
+              }, null, 2)
+            }
+          ]
+        };
+      } catch (error: any) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Failed to create sweep: ${error.message}` }]
+        };
+      }
+    }
+
+    case "cad_create_loft": {
+      const { documentId, profileIds, partStudioEid } = args;
+      try {
+        const loft = await onshapeClient.createLoft(documentId, {
+          profileIds,
+          partStudioEid
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                message: `Loft created successfully`,
+                loft
+              }, null, 2)
+            }
+          ]
+        };
+      } catch (error: any) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Failed to create loft: ${error.message}` }]
+        };
+      }
+    }
+
+    case "cad_run_stress_analysis": {
+      const { documentId, partId, materialProperties, boundaryConditions = [], loadCases = [] } = args;
+      try {
+        const analysis = await analysisEngine.runStressAnalysis({
+          documentId,
+          partId,
+          materialProperties,
+          boundaryConditions,
+          loadCases
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                message: `Stress analysis started for part ${partId}`,
+                analysis
+              }, null, 2)
+            }
+          ]
+        };
+      } catch (error: any) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Failed to run stress analysis: ${error.message}` }]
+        };
+      }
+    }
+
+    case "cad_run_motion_analysis": {
+      const { documentId, assemblyId, studyName, timeRange, timeSteps = 100, gravity = [0, 0, -9.81], constraints = [] } = args;
+      try {
+        const analysis = await analysisEngine.runMotionAnalysis({
+          documentId,
+          assemblyId,
+          studyName,
+          timeRange,
+          timeSteps,
+          gravity,
+          constraints
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                message: `Motion analysis '${studyName}' started for assembly ${assemblyId}`,
+                analysis
+              }, null, 2)
+            }
+          ]
+        };
+      } catch (error: any) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Failed to run motion analysis: ${error.message}` }]
+        };
+      }
+    }
+
+    case "cad_get_analysis_status": {
+      const { analysisId } = args;
+      try {
+        const status = analysisEngine.getAnalysisStatus(analysisId);
+        if (!status) {
+          return {
+            isError: true,
+            content: [{ type: "text", text: `Analysis ${analysisId} not found` }]
+          };
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(status, null, 2)
+            }
+          ]
+        };
+      } catch (error: any) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Failed to get analysis status: ${error.message}` }]
+        };
+      }
+    }
+
+    case "cad_share_document": {
+      const { documentId, userEmails, permissionLevel = "view", message } = args;
+      try {
+        const shareInfo = await collaborationManager.shareDocument(documentId, {
+          userEmails,
+          permissionLevel,
+          message
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                message: `Document ${documentId} shared with ${userEmails.length} users`,
+                shareInfo
+              }, null, 2)
+            }
+          ]
+        };
+      } catch (error: any) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Failed to share document: ${error.message}` }]
+        };
+      }
+    }
+
+    case "cad_get_change_events": {
+      const { documentId, startTime, endTime, eventType, userId, limit = 50 } = args;
+      try {
+        const events = collaborationManager.getChangeEvents(documentId, {
+          startTime,
+          endTime,
+          eventType,
+          userId,
+          limit
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                documentId,
+                events,
+                total: events.length,
+                filters: { startTime, endTime, eventType, userId }
+              }, null, 2)
+            }
+          ]
+        };
+      } catch (error: any) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Failed to get change events: ${error.message}` }]
+        };
+      }
+    }
+
+    default:
+      throw new Error(`Unknown tool: ${name}`);
+  }
 }
 
 // Initialize the MCP Server Factory

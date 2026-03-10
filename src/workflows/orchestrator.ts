@@ -1,5 +1,5 @@
 import { taskQueue } from './queue';
-import { queryGeneralAgent } from '../services/llm-router';
+import { queryGeneralAgent, queryGrokAgent, queryOpenAIAgent } from '../services/llm-router';
 import { backendTools, executeBackendTool } from '../mcp/server';
 
 class Orchestrator {
@@ -87,7 +87,7 @@ class Orchestrator {
             const allTools = [...backendTools, ...orchestratorTools];
 
             let loopCount = 0;
-            const MAX_LOOPS = 50;
+            const MAX_LOOPS = 100;
             let finalResultStr = "";
 
             while (loopCount < MAX_LOOPS) {
@@ -104,6 +104,9 @@ class Orchestrator {
 
                 taskQueue.addLog(task.id, `Querying General Agent (turn ${loopCount})...\nPayload:\n${currentQueryPayload}`);
                 const result = await queryGeneralAgent(messages, allTools);
+                //const result = await queryGrokAgent(messages, allTools);
+                //const result = await queryOpenAIAgent(messages, allTools);
+
 
                 let displayMsg = typeof result === 'string' ? result : JSON.stringify(result);
                 let parsedAns: any = {};
@@ -113,6 +116,7 @@ class Orchestrator {
                 let toolCallId: string | undefined = undefined;
                 let thinking: string | undefined = undefined;
                 let contentMetadata: string | undefined = undefined;
+                let modelLabel = (result as any)?.modelUsed || 'Unknown Model';
 
                 try {
                     let answerObj = typeof (result as any)?.answer === 'string' ? (result as any).answer : displayMsg;
@@ -128,9 +132,9 @@ class Orchestrator {
                     } catch (e) {
                         displayMsg = answerObj;
                     }
-                    taskQueue.addLog(task.id, `Received response from General Agent: ${displayMsg}`, thinking, contentMetadata);
+                    taskQueue.addLog(task.id, `[${modelLabel}] Received response: ${displayMsg}`, thinking, contentMetadata);
                 } catch (e) {
-                    taskQueue.addLog(task.id, `Received response from General Agent.`);
+                    taskQueue.addLog(task.id, `[${modelLabel}] Received response.`);
                 }
 
                 // 1. Check if the agent yielded the HUMAN_INTERVENTION block (legacy text fallback)
@@ -249,6 +253,9 @@ class Orchestrator {
 
             if (loopCount >= MAX_LOOPS) {
                 taskQueue.addLog(task.id, `WARNING: Hit max loop count of ${MAX_LOOPS}. Terminating task.`);
+                taskQueue.updateTaskStatus(task.id, 'FAILED', undefined, `Task terminated automatically after exceeding maximum allowed iterations (${MAX_LOOPS}). You may retry it to continue.`);
+                console.log(`[Orchestrator] Task [${task.id}] FAILED (Max Loops).`);
+                return;
             }
 
             taskQueue.updateTaskStatus(task.id, 'COMPLETED', finalResultStr);

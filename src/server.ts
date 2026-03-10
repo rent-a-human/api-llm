@@ -1,5 +1,6 @@
 import Fastify, { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import cors from '@fastify/cors';
+import staticFiles from '@fastify/static';
 import { z } from 'zod';
 import config from './config';
 import { routeRequest, queryChessAgent, queryReasoningModel, queryChessReasoningModel, queryGeneralAgent, queryGrokAgent } from './services/llm-router';
@@ -9,6 +10,9 @@ import multipart from '@fastify/multipart';
 import { extractPdfPayload } from './services/pdf-service';
 import fs from 'fs';
 import path from 'path';
+import { LocalCADClient } from './mcp/cad/local-cad-client';
+
+const localCADClient = new LocalCADClient();
 
 // Initialize Fastify
 const app: FastifyInstance = Fastify({
@@ -28,6 +32,12 @@ app.register(multipart, {
     limits: {
         fileSize: 52428800
     }
+});
+
+// Register static file serving for models
+app.register(staticFiles, {
+    root: path.join(process.cwd(), 'public'),
+    prefix: '/', // Allow /models/xxx.json
 });
 
 // Input Validation Schema
@@ -155,6 +165,106 @@ app.post('/upload', async (request: FastifyRequest, reply: FastifyReply) => {
     }
 });
 
+// Endpoint: POST /library/generate (Direct parametric generation for Dashboard)
+app.post('/library/generate', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+        const schema = z.object({
+            type: z.enum(['bolt', 'nut', 'gear', 'tube', 'tube2d', 'shopping-cart', 'go-cart']),
+            parameters: z.any()
+        });
+        const { type, parameters } = schema.parse(request.body);
+
+        let result;
+        if (type === 'bolt') {
+            result = await localCADClient.createBolt(parameters);
+        } else if (type === 'nut') {
+            result = await localCADClient.createNut(parameters);
+        } else if (type === 'gear') {
+            result = await localCADClient.createGear(parameters);
+        } else if (type === 'tube') {
+            result = await localCADClient.createTube(parameters);
+        } else if (type === 'tube2d') {
+            result = await localCADClient.createTube2D(parameters);
+        } else if (type === 'shopping-cart') {
+            result = await localCADClient.createShoppingCart(parameters);
+        } else if (type === 'go-cart') {
+            result = await localCADClient.createGoCart(parameters);
+        } else {
+            throw new Error("Invalid part type");
+        }
+
+        return reply.status(200).send({
+            success: true,
+            ...result
+        });
+    } catch (error: any) {
+        return reply.status(400).send({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// Endpoint: POST /custom/save (Save custom sketch/extrusion model)
+app.post('/custom/save', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+        const schema = z.object({
+            id: z.string(),
+            name: z.string(),
+            operations: z.array(z.any())
+        });
+        const { id, name, operations } = schema.parse(request.body);
+
+        const result = await localCADClient.createCustomModel(id, name, operations);
+
+        return reply.status(200).send({
+            success: true,
+            ...result
+        });
+    } catch (error: any) {
+        request.log.error(error);
+        return reply.status(400).send({
+            success: false,
+            error: error.message
+        });
+    }
+});
+app.get('/cad-models', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+        const modelsDir = path.join(process.cwd(), 'public', 'models');
+        if (!fs.existsSync(modelsDir)) {
+            return reply.status(200).send({ success: true, models: [] });
+        }
+
+        const files = fs.readdirSync(modelsDir);
+        const jsonFiles = files.filter(f => f.endsWith('.json'));
+
+        const models = jsonFiles.map(file => {
+            const content = fs.readFileSync(path.join(modelsDir, file), 'utf-8');
+            try {
+                const data = JSON.parse(content);
+                return {
+                    id: file.replace('.json', ''),
+                    ...data
+                };
+            } catch (e) {
+                return null;
+            }
+        }).filter(Boolean);
+
+        return reply.status(200).send({
+            success: true,
+            models
+        });
+    } catch (error: any) {
+        request.log.error(error);
+        return reply.status(500).send({
+            success: false,
+            error: "Failed to list models"
+        });
+    }
+});
+
 // Endpoint: POST /ask (General Purpose)
 app.post('/ask', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
@@ -225,6 +335,21 @@ app.post('/tasks/:id/respond', async (request: FastifyRequest<{ Params: { id: st
         if (error instanceof z.ZodError) {
             return reply.status(400).send({ success: false, error: "Validation Error", details: error.errors });
         }
+        return reply.status(500).send({ success: false, error: "Internal Server Error" });
+    }
+});
+// Endpoint: POST /tasks/:id/retry (Retry a FAILED task)
+app.post('/tasks/:id/retry', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    try {
+        const { id } = request.params;
+        const success = taskQueue.retryTask(id);
+        if (success) {
+            return reply.status(200).send({ success: true });
+        } else {
+            return reply.status(404).send({ success: false, error: "Task not found or not in FAILED state" });
+        }
+    } catch (error: any) {
+        request.log.error(error);
         return reply.status(500).send({ success: false, error: "Internal Server Error" });
     }
 });

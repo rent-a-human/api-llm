@@ -29,7 +29,7 @@ async function testApi() {
         const agentResponse = await fetch(`${BASE_URL}/agent`, {
             method: 'OPTIONS',
             headers: {
-                'Origin': 'https://rent-a-human.github.io',
+                'Origin': 'https://you-work.github.io',
                 'Access-Control-Request-Method': 'POST'
             }
         });

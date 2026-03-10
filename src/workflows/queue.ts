@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+
 export type TaskStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED' | 'TESTING' | 'DEPLOYING' | 'BLOCKED';
 
 export interface TaskLog {
@@ -23,6 +26,37 @@ export interface Task {
 
 class TaskQueue {
     private queue: Task[] = [];
+    private dbPath: string;
+
+    constructor() {
+        this.dbPath = path.join(process.cwd(), '.data', 'tasks.json');
+        this.loadQueue();
+    }
+
+    private loadQueue() {
+        try {
+            if (fs.existsSync(this.dbPath)) {
+                const data = fs.readFileSync(this.dbPath, 'utf8');
+                this.queue = JSON.parse(data);
+                console.log(`[TaskQueue] Loaded ${this.queue.length} tasks from ${this.dbPath}`);
+            }
+        } catch (e) {
+            console.error('[TaskQueue] Error loading tasks:', e);
+            this.queue = [];
+        }
+    }
+
+    private saveQueue() {
+        try {
+            const dir = path.dirname(this.dbPath);
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
+            fs.writeFileSync(this.dbPath, JSON.stringify(this.queue, null, 2));
+        } catch (e) {
+            console.error('[TaskQueue] Error saving tasks:', e);
+        }
+    }
 
     addTask(description: string, level: number = 2): string {
         const task: Task = {
@@ -47,6 +81,7 @@ class TaskQueue {
             }
             return a.createdAt - b.createdAt;
         });
+        this.saveQueue();
     }
 
     getNextPendingTask(): Task | undefined {
@@ -55,6 +90,7 @@ class TaskQueue {
             task.status = 'IN_PROGRESS';
             task.updatedAt = Date.now();
             task.logs.push({ timestamp: Date.now(), message: `Status updated to IN_PROGRESS` });
+            this.saveQueue();
         }
         return task;
     }
@@ -71,6 +107,7 @@ class TaskQueue {
                 task.humanResponse = humanResponse;
             }
             task.logs.push({ timestamp: Date.now(), message: `Status updated to ${status}` + (blockedReason ? ` - Reason: ${blockedReason}` : '') + (error ? `\n\n**Error Information:**\n${error}` : '') });
+            this.saveQueue();
             return true;
         }
         return false;
@@ -80,6 +117,7 @@ class TaskQueue {
         const task = this.getTask(taskId);
         if (task) {
             task.logs.push({ timestamp: Date.now(), message, thinking, content });
+            this.saveQueue();
         }
     }
 
@@ -96,6 +134,18 @@ class TaskQueue {
         return false;
     }
 
+    retryTask(taskId: string): boolean {
+        const task = this.queue.find(t => t.id === taskId);
+        if (task && task.status === 'FAILED') {
+            task.status = 'PENDING';
+            task.updatedAt = Date.now();
+            task.logs.push({ timestamp: Date.now(), message: `Task retry initiated by user. Re-queued.` });
+            this.sortQueue();
+            return true;
+        }
+        return false;
+    }
+
     getTask(id: string): Task | undefined {
         return this.queue.find(t => t.id === id);
     }
@@ -106,6 +156,7 @@ class TaskQueue {
 
     clearCompleted() {
         this.queue = this.queue.filter(t => t.status !== 'COMPLETED');
+        this.saveQueue();
     }
 }
 

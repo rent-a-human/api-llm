@@ -1,0 +1,99 @@
+{
+  "cookies": [
+    {
+      "name": "_u",
+      "value": "webservice-fdaac19d",
+      "domain": "cad.onshape.com",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "on-session-id",
+      "value": "IIm1bbtfKNxoy8g2zJuhRC5CcezHSY5Ww1x+ERE6GS/dGMKqAVYvh64z35gJoNy540sajl3Uob2p8c1MmXZbJNjaFxo6ZgnBI21dHhZhxxfxVlueyPFzLmqllXvn0tH6mJqf4cjdGzxABwu71hT5rwzghOFmhFsHtoTwNzr9O8Gn69xRdP4ouscOle74M/U7bm9DVhdeJ7kjBNwUt3LbtkSe6bDaqX1TjHyiNEDQ0JdA1G9SwrBXddkyWJrSn1xD",
+      "domain": ".onshape.com",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_ga",
+      "value": "GA1.1.2085576664.1772941751",
+      "domain": ".onshape.com",
+      "path": "/",
+      "expires": 1807501750.81489,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "XSRF-TOKEN",
+      "value": "Z+CMBMXOE0ZM/HUw9N+wEg==",
+      "domain": "cad.onshape.com",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "on",
+      "value": "fkn+rQACTdyB4bMvtKU6rMgNqXZcvdUQpECRIquZYkKenDbX3vQPhyXa8iTT81D/qFkSVmAwrnkimwIXFrcoW1lYiloYyp7AYnd4TqsJ8fDWVrNRmuRBsstQx/amNKIkuuFkos5CDtFekdOyW+tp3VOyK9/3I6e892dg/bvgAm5KQEUv2jNhnfMc4ZRvrLaF1cMph9krADAhm1T2UsNMO1w4bOdd1o+DA1UtK3IOSv8cIt228K2I9Vvxnm44xG4TvBEQiWxuUR5b0i/w42I/JMYvnOXuOss8Y0qvcFOeulftU/W+PBKS3Kd34XQ35Yc1G70LZgpn5QI=",
+      "domain": ".onshape.com",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_ga_MHJTW9LF87",
+      "value": "GS2.1.s1772941750$o1$g1$t1772941753$j57$l0$h0",
+      "domain": ".onshape.com",
+      "path": "/",
+      "expires": 1807501753.723083,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    }
+  ],
+  "origins": [
+    {
+      "origin": "https://cad.onshape.com",
+      "localStorage": [
+        {
+          "name": "document-details",
+          "value": "false"
+        },
+        {
+          "name": "bt.graphics.apperanceconstants",
+          "value": "{\n  \"DEFAULT_SPECULAR\": \"#999999\",\n  \"SMOOTH_EDGE_PHANTOM_COLOR\": \"#232323\"\n}"
+        },
+        {
+          "name": "ls.69ac7368013efc4f64891644.documentView.documentState",
+          "value": "{\"version\":\"33.2.4\",\"columnPinning\":{\"leftColIds\":[\"name\"],\"rightColIds\":[\"actions\"]},\"columnVisibility\":{\"hiddenColIds\":[\"itemType\",\"description\"]},\"columnSizing\":{\"columnSizingModel\":[{\"colId\":\"name\",\"width\":350},{\"colId\":\"modifiedAt\",\"width\":200},{\"colId\":\"modifiedBy\",\"width\":200},{\"colId\":\"owner\",\"width\":200},{\"colId\":\"itemType\",\"width\":200},{\"colId\":\"description\",\"width\":200},{\"colId\":\"actions\",\"width\":100}]},\"columnOrder\":{\"orderedColIds\":[\"name\",\"modifiedAt\",\"modifiedBy\",\"owner\",\"itemType\",\"description\",\"actions\"]},\"pagination\":{\"page\":0,\"pageSize\":100}}"
+        },
+        {
+          "name": "ls.69ac7368013efc4f64891644.documentDetailPanelPanelLength",
+          "value": "40"
+        },
+        {
+          "name": "ls.69ac7368013efc4f64891644.documentList.viewMode",
+          "value": "0"
+        },
+        {
+          "name": "ls.69ac7368013efc4f64891644.documentList.sortOrder",
+          "value": "desc"
+        },
+        {
+          "name": "ls.69ac7368013efc4f64891644.documentList.sortColumn",
+          "value": "modifiedAt"
+        }
+      ]
+    }
+  ]
+}

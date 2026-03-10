@@ -1,0 +1,81 @@
+{
+  "type": "custom",
+  "name": "third-nut",
+  "parameters": {
+    "operations": [
+      {
+        "id": "0.8937269951449491",
+        "name": "sketch_01",
+        "type": "sketch",
+        "sketch": [
+          {
+            "id": "0.40227776737977894",
+            "type": "polygon",
+            "points": [
+              [
+                0,
+                0
+              ]
+            ],
+            "radius": 44.53862543059399,
+            "sides": 6
+          },
+          {
+            "id": "0.26012979205993014",
+            "type": "circle",
+            "points": [
+              [
+                0,
+                0
+              ]
+            ],
+            "radius": 32.47722592993771
+          }
+        ],
+        "params": {
+          "plane": "alzado"
+        },
+        "parentId": "0.19689902015526128"
+      },
+      {
+        "id": "0.19689902015526128",
+        "name": "extrude_01",
+        "type": "extrude",
+        "sketch": [
+          {
+            "id": "0.40227776737977894",
+            "type": "polygon",
+            "points": [
+              [
+                0,
+                0
+              ]
+            ],
+            "radius": 44.53862543059399,
+            "sides": 6
+          },
+          {
+            "id": "0.26012979205993014",
+            "type": "circle",
+            "points": [
+              [
+                0,
+                0
+              ]
+            ],
+            "radius": 32.47722592993771
+          }
+        ],
+        "params": {
+          "depth": 29,
+          "direction": "mid",
+          "plane": "alzado",
+          "material": "clay",
+          "opType": "add"
+        }
+      }
+    ]
+  },
+  "stlUrl": "/models/third-nut.stl",
+  "timestamp": "2026-03-10T17:38:15.648Z"
+}
