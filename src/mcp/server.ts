@@ -5,6 +5,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import Fastify from "fastify";
+import config from "../config";
 import fs from "fs/promises";
 import fsSync from "fs";
 import path from "path";
@@ -29,7 +30,7 @@ const CAD_CONFIG = {
   onshape: {
     clientId: process.env.ONSHAPE_CLIENT_ID,
     clientSecret: process.env.ONSHAPE_CLIENT_SECRET,
-    redirectUri: process.env.ONSHAPE_REDIRECT_URI || "http://localhost:3000/callback",
+    redirectUri: process.env.ONSHAPE_REDIRECT_URI || `${config.API_BASE_URL}/callback`,
     accessKey: process.env.ONSHAPE_ACCESS_KEY,
     secretKey: process.env.ONSHAPE_SECRET_KEY,
     baseUrl: "https://cad.onshape.com"

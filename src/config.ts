@@ -18,6 +18,9 @@ const configSchema = z.object({
     FORCE_LOCAL: z.string().default('false').transform(val => val === 'true'),
     LOCAL_VISION_MODEL: z.string().default('llama3.2-vision:11b'),
     LOCAL_CODING_MODEL: z.string().default('qwen3-coder:480b-cloud'),//qwen3-vl:4b qwen3-coder:480b-cloud
+    API_BASE_URL: z.string().default(process.env.NODE_ENV === 'production'
+        ? 'https://api-llm-production.up.railway.app'
+        : 'http://localhost:3000'),
 });
 
 const config = configSchema.parse(process.env);

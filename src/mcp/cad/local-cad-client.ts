@@ -625,6 +625,163 @@ export class LocalCADClient {
         return this.saveModel(`go-cart-${Date.now()}`, assembly, { type: 'go-cart', parameters: options });
     }
 
+    private generateShape2D(regions: any[]): any {
+        if (regions.length === 0) return null;
+
+        const shapes2d: any[] = [];
+        for (const region of regions) {
+            let shape: any = null;
+            if (region.type === 'circle') {
+                shape = primitives.circle({ center: region.points[0], radius: region.radius, segments: 64 });
+            } else if (region.type === 'rectangle' || region.type === 'center-rectangle') {
+                const [p1, p2] = region.points;
+                let minX, maxX, minY, maxY;
+                if (region.type === 'rectangle') {
+                    minX = Math.min(p1[0], p2[0]); maxX = Math.max(p1[0], p2[0]);
+                    minY = Math.min(p1[1], p2[1]); maxY = Math.max(p1[1], p2[1]);
+                } else {
+                    const dx = Math.abs(p2[0] - p1[0]); const dy = Math.abs(p2[1] - p1[1]);
+                    minX = p1[0] - dx; maxX = p1[0] + dx; minY = p1[1] - dy; maxY = p1[1] + dy;
+                }
+                shape = primitives.rectangle({ center: [(minX + maxX) / 2, (minY + maxY) / 2], size: [maxX - minX, maxY - minY] });
+            } else if (region.type === 'polygon') {
+                if (region.points && region.points.length >= 3) {
+                    shape = primitives.polygon({ points: region.points });
+                } else if (region.radius && region.sides) {
+                    const pts: [number, number][] = [];
+                    const startAngle = 0;
+                    const cx = region.points?.[0]?.[0] ?? 0;
+                    const cy = region.points?.[0]?.[1] ?? 0;
+                    for (let i = 0; i < region.sides; i++) {
+                        const ang = startAngle + (i / region.sides) * Math.PI * 2;
+                        pts.push([
+                            cx + Math.cos(ang) * region.radius,
+                            cy + Math.sin(ang) * region.radius
+                        ]);
+                    }
+                    shape = primitives.polygon({ points: pts });
+                }
+            } else if (region.type === 'loop') {
+                const elements = [...region.elements];
+                const segments: any[] = [];
+                if (elements.length > 0) {
+                    let first = elements.shift()!;
+                    segments.push(first);
+
+                    // Walk forward
+                    let lastPoint = first.points[1];
+                    let foundForward = true;
+                    while (foundForward) {
+                        const idx = elements.findIndex((el: any) =>
+                            (Math.abs(el.points[0][0] - lastPoint[0]) < 0.5 && Math.abs(el.points[0][1] - lastPoint[1]) < 0.5) ||
+                            (Math.abs(el.points[1][0] - lastPoint[0]) < 0.5 && Math.abs(el.points[1][1] - lastPoint[1]) < 0.5)
+                        );
+                        if (idx !== -1) {
+                            const el = elements.splice(idx, 1)[0];
+                            const isReversed = (Math.abs(el.points[1][0] - lastPoint[0]) < 0.5 && Math.abs(el.points[1][1] - lastPoint[1]) < 0.5);
+                            const oriented = isReversed ? { ...el, points: [el.points[1], el.points[0], ...el.points.slice(2)] } : el;
+                            segments.push(oriented);
+                            lastPoint = oriented.points[1];
+                        } else {
+                            foundForward = false;
+                        }
+                    }
+
+                    // Walk backward
+                    let firstPoint = first.points[0];
+                    let foundBackward = true;
+                    while (foundBackward) {
+                        const idx = elements.findIndex((el: any) =>
+                            (Math.abs(el.points[0][0] - firstPoint[0]) < 0.5 && Math.abs(el.points[0][1] - firstPoint[1]) < 0.5) ||
+                            (Math.abs(el.points[1][0] - firstPoint[0]) < 0.5 && Math.abs(el.points[1][1] - firstPoint[1]) < 0.5)
+                        );
+                        if (idx !== -1) {
+                            const el = elements.splice(idx, 1)[0];
+                            const isForward = (Math.abs(el.points[1][0] - firstPoint[0]) < 0.5 && Math.abs(el.points[1][1] - firstPoint[1]) < 0.5);
+                            const oriented = isForward ? el : { ...el, points: [el.points[1], el.points[0], ...el.points.slice(2)] };
+                            segments.unshift(oriented);
+                            firstPoint = oriented.points[0];
+                        } else {
+                            foundBackward = false;
+                        }
+                    }
+                }
+
+                const loopPoints: [number, number][] = [];
+                segments.forEach((el: any) => {
+                    const normalizedPoints = el.type === 'polyline' ? el.points : [el.points[0], el.points[1]];
+
+                    if (el.type === 'line' || el.type === 'polyline') {
+                        // Add all points except the last one (since the last one is the start of the next or the closure)
+                        for (let i = 0; i < normalizedPoints.length - 1; i++) {
+                            loopPoints.push(normalizedPoints[i]);
+                        }
+                    } else if (el.type === 'arc' && normalizedPoints.length >= 3) {
+                        const p1 = normalizedPoints[0], p2 = normalizedPoints[1], p3 = normalizedPoints[2];
+                        const x1 = p1[0], y1 = p1[1], x2 = p2[0], y2 = p2[1], x3 = p3[0], y3 = p3[1];
+                        const D = 2 * (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2));
+                        if (Math.abs(D) > 0.0001) {
+                            const cx = ((x1 * x1 + y1 * y1) * (y2 - y3) + (x2 * x2 + y2 * y2) * (y3 - y1) + (x3 * x3 + y3 * y3) * (y1 - y2)) / D;
+                            const cy = ((x1 * x1 + y1 * y1) * (x3 - x2) + (x2 * x2 + y2 * y2) * (x1 - x3) + (x3 * x3 + y3 * y3) * (x2 - x1)) / D;
+                            const radius = Math.sqrt((x1 - cx) * (x1 - cx) + (y1 - cy) * (y1 - cy));
+                            const startAngle = Math.atan2(y1 - cy, x1 - cx);
+                            const endAngle = Math.atan2(y2 - cy, x2 - cx);
+                            const midAngle = Math.atan2(y3 - cy, x3 - cx);
+                            let diff = endAngle - startAngle;
+                            while (diff < 0) diff += Math.PI * 2;
+                            let midDiff = midAngle - startAngle;
+                            while (midDiff < 0) midDiff += Math.PI * 2;
+                            const clockWise = midDiff > (diff % (Math.PI * 2));
+                            const steps = 12;
+                            for (let i = 0; i < steps; i++) { // Go to steps-1 so we don't duplicate end point
+                                const t = i / steps;
+                                const ang = clockWise
+                                    ? startAngle - (startAngle - (endAngle < startAngle ? endAngle : endAngle - Math.PI * 2)) * t
+                                    : startAngle + diff * t;
+                                loopPoints.push([cx + Math.cos(ang) * radius, cy + Math.sin(ang) * radius]);
+                            }
+                        } else {
+                            loopPoints.push(normalizedPoints[0]);
+                        }
+                    }
+                });
+
+                // Add the very last point to close the loop
+                if (segments.length > 0) {
+                    const lastSeg = segments[segments.length - 1];
+                    const pts = lastSeg.type === 'polyline' ? lastSeg.points : [lastSeg.points[0], lastSeg.points[1]];
+                    loopPoints.push(pts[pts.length - 1]);
+                }
+                const uniquePoints: [number, number][] = [];
+                loopPoints.forEach(p => {
+                    if (uniquePoints.length === 0 || Math.hypot(p[0] - uniquePoints[uniquePoints.length - 1][0], p[1] - uniquePoints[uniquePoints.length - 1][1]) > 0.001) {
+                        uniquePoints.push(p);
+                    }
+                });
+                if (uniquePoints.length >= 3) {
+                    shape = primitives.polygon({ points: uniquePoints });
+                }
+            }
+            if (shape) shapes2d.push(shape);
+        }
+
+        if (shapes2d.length === 0) return null;
+
+        const sortedByArea = shapes2d.sort((a, b) => {
+            const bA = measurements.measureBoundingBox(a);
+            const bB = measurements.measureBoundingBox(b);
+            const areaA = (bA[1][0] - bA[0][0]) * (bA[1][1] - bA[0][1]);
+            const areaB = (bB[1][0] - bB[0][0]) * (bB[1][1] - bB[0][1]);
+            return areaB - areaA;
+        });
+
+        let result2d = sortedByArea[0];
+        for (let i = 1; i < sortedByArea.length; i++) {
+            result2d = booleans.subtract(result2d, sortedByArea[i]);
+        }
+        return result2d;
+    }
+
     /**
      * Generates a high-performance custom model from a series of CAD operations.
      */
@@ -636,99 +793,8 @@ export class LocalCADClient {
         for (const op of operations) {
             if (op.type === 'extrude') {
                 const { depth = 10, direction = 'pos', opType = 'add', plane = 'alzado' } = op.params;
-                const regions = op.sketch || [];
-                if (regions.length === 0) continue;
-
-                const shapes2d: any[] = [];
-                for (const region of regions) {
-                    let shape: any = null;
-                    if (region.type === 'circle') {
-                        shape = primitives.circle({ center: region.points[0], radius: region.radius, segments: 64 });
-                    } else if (region.type === 'polygon') {
-                        if (region.points && region.points.length >= 3) {
-                            shape = primitives.polygon({ points: region.points });
-                        } else if (region.radius && region.sides) {
-                            // Parametric polygon (e.g. Hexagon)
-                            const pts: [number, number][] = [];
-                            const startAngle = 0;
-                            const cx = region.points?.[0]?.[0] ?? 0;
-                            const cy = region.points?.[0]?.[1] ?? 0;
-                            for (let i = 0; i < region.sides; i++) {
-                                const ang = startAngle + (i / region.sides) * Math.PI * 2;
-                                pts.push([
-                                    cx + Math.cos(ang) * region.radius,
-                                    cy + Math.sin(ang) * region.radius
-                                ]);
-                            }
-                            shape = primitives.polygon({ points: pts });
-                        }
-                    } else if (region.type === 'loop') {
-                        // Reconstruct loop from lines and arcs
-                        const loopPoints: [number, number][] = [];
-                        region.elements.forEach((el: any) => {
-                            if (el.type === 'line') {
-                                loopPoints.push(el.points[0]);
-                                loopPoints.push(el.points[1]);
-                            } else if (el.type === 'arc') {
-                                const p1 = el.points[0], p2 = el.points[1], p3 = el.points[2];
-                                const x1 = p1[0], y1 = p1[1], x2 = p2[0], y2 = p2[1], x3 = p3[0], y3 = p3[1];
-                                const D = 2 * (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2));
-                                if (Math.abs(D) > 0.0001) {
-                                    const cx = ((x1 * x1 + y1 * y1) * (y2 - y3) + (x2 * x2 + y2 * y2) * (y3 - y1) + (x3 * x3 + y3 * y3) * (y1 - y2)) / D;
-                                    const cy = ((x1 * x1 + y1 * y1) * (x3 - x2) + (x2 * x2 + y2 * y2) * (x1 - x3) + (x3 * x3 + y3 * y3) * (x2 - x1)) / D;
-                                    const radius = Math.sqrt((x1 - cx) * (x1 - cx) + (y1 - cy) * (y1 - cy));
-                                    const startAngle = Math.atan2(y1 - cy, x1 - cx);
-                                    const endAngle = Math.atan2(y2 - cy, x2 - cx);
-                                    const midAngle = Math.atan2(y3 - cy, x3 - cx);
-
-                                    let diff = endAngle - startAngle;
-                                    while (diff < 0) diff += Math.PI * 2;
-                                    let midDiff = midAngle - startAngle;
-                                    while (midDiff < 0) midDiff += Math.PI * 2;
-                                    const clockWise = midDiff > (diff % (Math.PI * 2));
-
-                                    const steps = 12;
-                                    for (let i = 0; i <= steps; i++) {
-                                        const t = i / steps;
-                                        const ang = clockWise
-                                            ? startAngle - (startAngle - (endAngle < startAngle ? endAngle : endAngle - Math.PI * 2)) * t
-                                            : startAngle + diff * t;
-                                        loopPoints.push([cx + Math.cos(ang) * radius, cy + Math.sin(ang) * radius]);
-                                    }
-                                } else {
-                                    loopPoints.push(el.points[1]);
-                                }
-                            }
-                        });
-                        // Filter duplicates
-                        const uniquePoints: [number, number][] = [];
-                        loopPoints.forEach(p => {
-                            if (uniquePoints.length === 0 || Math.hypot(p[0] - uniquePoints[uniquePoints.length - 1][0], p[1] - uniquePoints[uniquePoints.length - 1][1]) > 0.001) {
-                                uniquePoints.push(p);
-                            }
-                        });
-                        if (uniquePoints.length >= 3) {
-                            shape = primitives.polygon({ points: uniquePoints });
-                        }
-                    }
-                    if (shape) shapes2d.push(shape);
-                }
-
-                if (shapes2d.length === 0) continue;
-
-                // Sort by area (bounding box) to handle holes
-                const sortedByArea = shapes2d.sort((a, b) => {
-                    const bA = measurements.measureBoundingBox(a);
-                    const bB = measurements.measureBoundingBox(b);
-                    const areaA = (bA[1][0] - bA[0][0]) * (bA[1][1] - bA[0][1]);
-                    const areaB = (bB[1][0] - bB[0][0]) * (bB[1][1] - bB[0][1]);
-                    return areaB - areaA; // Largest first
-                });
-
-                let result2d = sortedByArea[0];
-                for (let i = 1; i < sortedByArea.length; i++) {
-                    result2d = booleans.subtract(result2d, sortedByArea[i]);
-                }
+                const result2d = this.generateShape2D(op.sketch || []);
+                if (!result2d) continue;
 
                 let extruded = extrusions.extrudeLinear({ height: depth }, result2d);
 
@@ -754,6 +820,52 @@ export class LocalCADClient {
                         finalAssembly = booleans.union(finalAssembly, extruded);
                     } else {
                         finalAssembly = booleans.subtract(finalAssembly, extruded);
+                    }
+                }
+            } else if (op.type === 'revolve') {
+                const { angle = 360, axisId = 'y', opType = 'add', plane = 'alzado' } = op.params;
+                let result2d = this.generateShape2D(op.sketch || []);
+                if (!result2d) continue;
+
+                // JSCAD revolves around the Z axis.
+                // Our frontend revolves around X or Y of the sketch.
+                // Sketch plane is XY in both cases.
+
+                let shapeForRotate = result2d;
+                if (axisId === 'x') {
+                    // To revolve around X in JSCAD (which revolves around Z), we rotate the 2D shape so X becomes the revolution axis
+                    // Actually, if we rotate 2D shape 90deg, Y becomes X.
+                    shapeForRotate = transforms.rotateZ(Math.PI / 2, shapeForRotate);
+                }
+
+                let revolved = extrusions.extrudeRotate({ angle: (angle * Math.PI) / 180, segments: 64 }, shapeForRotate);
+
+                // Now it's revolved around Z.
+                // We need to re-orient the 3D solid so the Z-axis aligns with the intended sketch axis.
+                if (axisId === 'x') {
+                    // Turn Z into X
+                    revolved = transforms.rotateY(Math.PI / 2, revolved);
+                } else {
+                    // Turn Z into Y (Match LatheGeometry behavior)
+                    // If we revolved the original shape around Z, 
+                    // and we want it to look like it revolved around Y in our coordinate system:
+                    revolved = transforms.rotateX(Math.PI / 2, revolved);
+                }
+
+                // Then apply plane rotations
+                if (plane === 'planta') {
+                    revolved = transforms.rotateX(-Math.PI / 2, revolved);
+                } else if (plane === 'lateral') {
+                    revolved = transforms.rotateY(Math.PI / 2, revolved);
+                }
+
+                if (!finalAssembly) {
+                    finalAssembly = revolved;
+                } else {
+                    if (opType === 'add') {
+                        finalAssembly = booleans.union(finalAssembly, revolved);
+                    } else {
+                        finalAssembly = booleans.subtract(finalAssembly, revolved);
                     }
                 }
             }
