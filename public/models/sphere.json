@@ -1,0 +1,58 @@
+{
+  "type": "custom",
+  "name": "sphere",
+  "parameters": {
+    "operations": [
+      {
+        "id": "0.2904518469650542",
+        "name": "sketch_01",
+        "type": "sketch",
+        "sketch": [
+          {
+            "id": "0.9299595560073803",
+            "type": "circle",
+            "points": [
+              [
+                0,
+                0
+              ]
+            ],
+            "radius": 40
+          }
+        ],
+        "params": {
+          "plane": "alzado"
+        },
+        "parentId": "0.6556554341939163"
+      },
+      {
+        "id": "0.6556554341939163",
+        "name": "revolve_01",
+        "type": "revolve",
+        "sketch": [
+          {
+            "id": "0.9299595560073803",
+            "type": "circle",
+            "points": [
+              [
+                0,
+                0
+              ]
+            ],
+            "radius": 40
+          }
+        ],
+        "params": {
+          "angle": 360,
+          "axisId": "y",
+          "axisType": "main",
+          "plane": "alzado",
+          "material": "metal",
+          "opType": "add"
+        }
+      }
+    ]
+  },
+  "stlUrl": "/models/sphere.stl",
+  "timestamp": "2026-03-11T18:03:29.381Z"
+}

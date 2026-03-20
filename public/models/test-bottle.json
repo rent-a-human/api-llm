@@ -1,0 +1,73 @@
+{
+  "type": "custom",
+  "name": "Realistic Bottle",
+  "parameters": {
+    "operations": [
+      {
+        "type": "revolve",
+        "sketch": [
+          {
+            "type": "line",
+            "coordinates": [
+              0,
+              0,
+              30,
+              0
+            ]
+          },
+          {
+            "type": "line",
+            "coordinates": [
+              30,
+              0,
+              30,
+              150
+            ]
+          },
+          {
+            "type": "line",
+            "coordinates": [
+              30,
+              150,
+              15,
+              170
+            ]
+          },
+          {
+            "type": "line",
+            "coordinates": [
+              15,
+              170,
+              15,
+              200
+            ]
+          },
+          {
+            "type": "line",
+            "coordinates": [
+              15,
+              200,
+              0,
+              200
+            ]
+          },
+          {
+            "type": "line",
+            "coordinates": [
+              0,
+              200,
+              0,
+              0
+            ]
+          }
+        ],
+        "params": {
+          "angle": 360,
+          "axis": "Y"
+        }
+      }
+    ]
+  },
+  "stlUrl": "/models/test-bottle.stl",
+  "timestamp": "2026-03-13T01:51:22.172Z"
+}

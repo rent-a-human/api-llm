@@ -169,7 +169,7 @@ app.post('/upload', async (request: FastifyRequest, reply: FastifyReply) => {
 app.post('/library/generate', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
         const schema = z.object({
-            type: z.enum(['bolt', 'nut', 'gear', 'tube', 'tube2d', 'shopping-cart', 'go-cart']),
+            type: z.enum(['bolt', 'nut', 'gear', 'tube', 'tube2d', 'shopping-cart', 'go-cart', 'bottle', 'scooter']),
             parameters: z.any()
         });
         const { type, parameters } = schema.parse(request.body);
@@ -189,6 +189,10 @@ app.post('/library/generate', async (request: FastifyRequest, reply: FastifyRepl
             result = await localCADClient.createShoppingCart(parameters);
         } else if (type === 'go-cart') {
             result = await localCADClient.createGoCart(parameters);
+        } else if (type === 'bottle') {
+            result = await localCADClient.createBottle(parameters);
+        } else if (type === 'scooter') {
+            result = await localCADClient.createScooter(parameters);
         } else {
             throw new Error("Invalid part type");
         }

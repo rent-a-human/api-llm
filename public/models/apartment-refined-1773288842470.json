@@ -1,0 +1,210 @@
+{
+  "type": "custom",
+  "name": "Refined Apartment Floor Test",
+  "parameters": {
+    "operations": [
+      {
+        "type": "extrude",
+        "params": {
+          "depth": 5,
+          "direction": "pos",
+          "opType": "add",
+          "plane": "planta",
+          "offset": 0
+        },
+        "sketch": [
+          {
+            "type": "rectangle",
+            "points": [
+              [
+                -100,
+                -60
+              ],
+              [
+                100,
+                60
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "type": "extrude",
+        "params": {
+          "depth": 30,
+          "direction": "pos",
+          "opType": "add",
+          "plane": "planta",
+          "offset": 5
+        },
+        "sketch": [
+          {
+            "type": "rectangle",
+            "points": [
+              [
+                -100,
+                -60
+              ],
+              [
+                100,
+                60
+              ]
+            ]
+          },
+          {
+            "type": "rectangle",
+            "points": [
+              [
+                -98,
+                -58
+              ],
+              [
+                -1,
+                7
+              ]
+            ]
+          },
+          {
+            "type": "rectangle",
+            "points": [
+              [
+                -98,
+                9
+              ],
+              [
+                -1,
+                58
+              ]
+            ]
+          },
+          {
+            "type": "rectangle",
+            "points": [
+              [
+                1,
+                -58
+              ],
+              [
+                98,
+                58
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "type": "extrude",
+        "params": {
+          "depth": 200,
+          "direction": "mid",
+          "opType": "subtract",
+          "plane": "alzado"
+        },
+        "sketch": [
+          {
+            "type": "rectangle",
+            "points": [
+              [
+                -15,
+                5
+              ],
+              [
+                15,
+                25
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "type": "extrude",
+        "params": {
+          "depth": 200,
+          "direction": "mid",
+          "opType": "subtract",
+          "plane": "lateral"
+        },
+        "sketch": [
+          {
+            "type": "rectangle",
+            "points": [
+              [
+                -25,
+                5
+              ],
+              [
+                -5,
+                25
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "type": "extrude",
+        "params": {
+          "depth": 200,
+          "direction": "mid",
+          "opType": "subtract",
+          "plane": "alzado"
+        },
+        "sketch": [
+          {
+            "type": "rectangle",
+            "points": [
+              [
+                -80,
+                15
+              ],
+              [
+                -60,
+                25
+              ]
+            ]
+          },
+          {
+            "type": "rectangle",
+            "points": [
+              [
+                -40,
+                15
+              ],
+              [
+                -20,
+                25
+              ]
+            ]
+          },
+          {
+            "type": "rectangle",
+            "points": [
+              [
+                20,
+                15
+              ],
+              [
+                40,
+                25
+              ]
+            ]
+          },
+          {
+            "type": "rectangle",
+            "points": [
+              [
+                60,
+                15
+              ],
+              [
+                80,
+                25
+              ]
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "stlUrl": "/models/apartment-refined-1773288842470.stl",
+  "timestamp": "2026-03-12T04:14:02.488Z"
+}

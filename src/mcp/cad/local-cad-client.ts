@@ -14,6 +14,7 @@ export interface BoltOptions {
     headFillet?: number;
     tipChamfer?: number;
     tipDiameter?: number;
+    resolution?: number;
 }
 
 export interface NutOptions {
@@ -22,6 +23,7 @@ export interface NutOptions {
     holeDiameter: number;
     threadPitch?: number;
     counterSink?: number;
+    resolution?: number;
 }
 
 export interface GearOptions {
@@ -31,12 +33,14 @@ export interface GearOptions {
     holeDiameter: number;
     helixAngle?: number;
     pressureAngle?: number;
+    resolution?: number;
 }
 
 export interface TubeOptions {
     innerDiameter: number;
     outerDiameter: number;
     length: number;
+    resolution?: number;
 }
 
 export interface Tube2DOptions {
@@ -49,6 +53,18 @@ export interface ShoppingCartOptions {
     basketWidth: number;
     basketHeight: number;
     wheelDiameter: number;
+    resolution?: number;
+    hasScooter?: boolean;
+    hasArms?: boolean;
+    scooterLength?: number;
+    armReach?: number;
+    handlebarWidth?: number;
+    basketDensity?: number;
+    scooterWidth?: number;
+    wheelArmReach?: number;
+    suspensionHeight?: number;
+    suspensionOffset?: number;
+    basketFloorHeight?: number;
 }
 
 export interface GoCartOptions {
@@ -56,6 +72,23 @@ export interface GoCartOptions {
     chassisWidth: number;
     wheelDiameter: number;
     seatHeight: number;
+    resolution?: number;
+}
+
+export interface BottleOptions {
+    bottomRadius: number;
+    bodyHeight: number;
+    shoulderHeight: number;
+    neckRadius: number;
+    neckHeight: number;
+    wallThickness: number;
+    resolution?: number;
+}
+
+export interface ScooterOptions {
+    scooterLength: number;
+    handlebarWidth: number;
+    resolution?: number;
 }
 
 export class LocalCADClient {
@@ -82,9 +115,10 @@ export class LocalCADClient {
             threadLength = 35,
             headFillet = 1.2,
             tipChamfer = 1.5,
-            tipDiameter
+            tipDiameter,
+            resolution = 32
         } = options;
-        const segments = 32;
+        const segments = resolution;
         const pitch = threadPitch;
         const majorRadius = shaftDiameter / 2;
         const threadHeight = 0.866 * pitch;
@@ -180,8 +214,8 @@ export class LocalCADClient {
      * Generates a high-fidelity parametric Nut.
      */
     async createNut(options: NutOptions): Promise<{ id: string; url: string; stlUrl: string }> {
-        const { width, height, holeDiameter, threadPitch = 1.75, counterSink = 1.0 } = options;
-        const segments = 32;
+        const { width, height, holeDiameter, threadPitch = 1.75, counterSink = 1.0, resolution = 32 } = options;
+        const segments = resolution;
         const circumradius = width / Math.sqrt(3);
         const internalRadius = holeDiameter / 2;
         const pitch = threadPitch;
@@ -255,7 +289,7 @@ export class LocalCADClient {
     // Generates a parametric Mathematically Correct Involute Gear.
     async createGear(options: GearOptions): Promise<{ id: string; url: string; stlUrl: string }> {
         try {
-            const { teeth, module, thickness, holeDiameter, helixAngle = 0, pressureAngle = 20 } = options;
+            const { teeth, module, thickness, holeDiameter, helixAngle = 0, pressureAngle = 20, resolution = 64 } = options;
 
             // Parameter verification
             if (pressureAngle > 35 && helixAngle === 0) {
@@ -345,7 +379,7 @@ export class LocalCADClient {
             gear = transforms.translate([0, 0, -thickness / 2], gear);
 
             if (holeDiameter > 0) {
-                const hole = primitives.cylinder({ radius: holeDiameter / 2, height: thickness + 5, segments: 64 });
+                const hole = primitives.cylinder({ radius: holeDiameter / 2, height: thickness + 5, segments: resolution });
                 gear = booleans.subtract(gear, hole);
             }
 
@@ -361,8 +395,8 @@ export class LocalCADClient {
      */
     async createTube(options: TubeOptions): Promise<{ id: string; url: string; stlUrl: string }> {
         console.log('[LocalCAD] Creating Tube with options:', options);
-        const { innerDiameter, outerDiameter, length } = options;
-        const segments = 64;
+        const { innerDiameter, outerDiameter, length, resolution = 64 } = options;
+        const segments = resolution;
 
         if (innerDiameter >= outerDiameter) {
             throw new Error("Inner diameter must be less than outer diameter.");
@@ -430,20 +464,25 @@ export class LocalCADClient {
     }
 
     /**
-     * Generates a complex parametric ShoppingCart assembly.
+     * Generates a complex parametric ShoppingCart assembly with optional Scooter and Robotic Arms.
      */
     async createShoppingCart(options: ShoppingCartOptions): Promise<{ id: string; url: string; stlUrl: string }> {
-        console.log('[LocalCAD] Creating ShoppingCart with options:', options);
-        const { basketLength, basketWidth, basketHeight, wheelDiameter } = options;
-        const tubeRadius = 1;
+        console.log('[LocalCAD] Creating Hybrid ShoppingCart with options:', JSON.stringify(options, null, 2));
+        const { 
+            basketLength = 60, basketWidth = 40, basketHeight = 30, wheelDiameter = 10, resolution = 64,
+            hasScooter = false, hasArms = false, scooterLength = 100, armReach = 40, handlebarWidth = 50,
+            basketDensity = 50, scooterWidth = 35, wheelArmReach = 30, 
+            suspensionHeight = 15, suspensionOffset = 30, basketFloorHeight = 20
+        } = options;
+        const tubeRadius = resolution < 32 ? 1.5 : 1; // Adjust visual weight for low res
         const wheelRadius = wheelDiameter / 2;
-        const legHeight = 30; // Height from ground to basket bottom
         // 1. BASKET (Wireframe with walls - Optimized for memory)
-        const gridSpacing = 20; // Increased spacing to reduce rod count
+        // gridSpacing: 0% -> 60mm (very sparse), 100% -> 4mm (very dense)
+        const gridSpacing = Math.max(4, 60 - (basketDensity / 100) * 56); 
         const wallRods: any[] = [];
         const baseRods: any[] = [];
 
-        const segments = 8; // Reduced segments for better memory efficiency
+        const segments = Math.max(4, Math.floor(resolution / 8)); // Scaled segments for rods
 
         const numY = Math.max(1, Math.round(basketWidth / gridSpacing));
         const numZ = Math.max(1, Math.round(basketHeight / gridSpacing));
@@ -485,40 +524,200 @@ export class LocalCADClient {
             }
         }
 
-        // 2. FRAME
+        // 2. FRAME (Minimal frame to support the basket)
         const frameRods: any[] = [];
         const handleHeight = basketHeight + 15;
-        const cornerPositions: [number, number][] = [
+        
+        // Vertical support rods (Now only for handle and rear attachment)
+        const rearCorners: [number, number][] = [
             [-basketLength / 2, -basketWidth / 2],
-            [-basketLength / 2, basketWidth / 2],
-            [basketLength / 2, -basketWidth / 2],
-            [basketLength / 2, basketWidth / 2]
+            [-basketLength / 2, basketWidth / 2]
         ];
 
-        for (const [x, y] of cornerPositions) {
-            const h = (x < 0) ? handleHeight + legHeight : legHeight + basketHeight; // Ensure front poles reach basket height
-            const zOff = (x < 0) ? (handleHeight - legHeight) / 2 : (basketHeight - legHeight) / 2;
-            const rod = primitives.cylinder({ radius: tubeRadius, height: h, segments });
-            frameRods.push(transforms.translate([x, y, zOff], rod));
+        for (const [x, y] of rearCorners) {
+            const rod = primitives.cylinder({ radius: tubeRadius, height: handleHeight, segments });
+            frameRods.push(transforms.translate([x, y, handleHeight / 2], rod));
         }
 
         const handle = primitives.cylinder({ radius: tubeRadius * 1.2, height: basketWidth + tubeRadius * 2, segments });
         frameRods.push(transforms.translate([-basketLength / 2, 0, handleHeight], transforms.rotateX(Math.PI / 2, handle)));
 
-        // 3. WHEELS
-        const wheels: any[] = [];
-        for (const [x, y] of cornerPositions) {
-            const wheel = primitives.cylinder({ radius: wheelRadius, height: wheelRadius / 2, segments: 16 });
-            const rotatedWheel = transforms.rotateX(Math.PI / 2, wheel);
-            wheels.push(transforms.translate([x, y, -legHeight], rotatedWheel));
-        }
-
-        // Union in smaller groups to prevent crash
+        // 3. ASSEMBLY BASE
         const basketUnion = booleans.union(...baseRods, ...wallRods);
         const frameUnion = booleans.union(...frameRods);
-        const wheelsUnion = booleans.union(...wheels);
 
-        let assembly = booleans.union(basketUnion, frameUnion, wheelsUnion);
+        let assembly = booleans.union(basketUnion, frameUnion);
+
+        // --- BASKET ELEVATION ---
+        // Lift the basket to the floor height
+        assembly = transforms.translate([0, 0, basketFloorHeight], assembly);
+
+        // 4. SCOOTER EVOLUTION & SUSPENSION
+        if (hasScooter) {
+            const scooterBaseWidth = scooterWidth;
+            const scooterBaseHeight = 10;
+            const wheelWidth = wheelRadius * 0.8;
+            const wheelRes = Math.max(32, resolution);
+            // suspensionHeight override removed to use parameter from options
+            // Vertical offset of scooter base from the floor
+            
+            // Motor Platform - Shortened and offset back to avoid steering collision
+            const platformLen = scooterLength * 0.82;
+            let platformGeom = primitives.cuboid({ size: [platformLen, scooterBaseWidth, scooterBaseHeight] });
+            
+            // Rear Wheel Well (Boolean subtraction to avoid intersection)
+            const rearWheelXRelative = (scooterLength/2 - 10) - (scooterLength/2 - platformLen/2);
+            const wellRadius = wheelRadius * 1.5;
+            const wellGap = wheelWidth + 8;
+            const wheelWellCutout = transforms.translate([rearWheelXRelative, 0, -scooterBaseHeight/2], 
+                transforms.rotateX(Math.PI/2, primitives.cylinder({ radius: wellRadius, height: wellGap, segments: 16 }))
+            );
+            platformGeom = booleans.subtract(platformGeom, wheelWellCutout);
+
+            // Axle mounts (Structural brackets for the rear wheel)
+            const mountRadius = wheelRadius * 0.5;
+            const mountWidth = 4;
+            const leftMount = transforms.translate([rearWheelXRelative, -wellGap/2 + mountWidth/2, -scooterBaseHeight/2],
+                transforms.rotateX(Math.PI/2, primitives.cylinder({ radius: mountRadius, height: mountWidth, segments: 16 }))
+            );
+            const rightMount = transforms.translate([rearWheelXRelative, wellGap/2 - mountWidth/2, -scooterBaseHeight/2],
+                transforms.rotateX(Math.PI/2, primitives.cylinder({ radius: mountRadius, height: mountWidth, segments: 16 }))
+            );
+            const platform = booleans.union(platformGeom, leftMount, rightMount);
+
+            // Central support bridging platform to basket (Scooter body is the skeleton now)
+            // Pillar removed per user request: "We don't need central pillar"
+
+            // Wheels (Main Drive wheels on Scooter Base)
+            const wheelGeom = primitives.cylinder({ radius: wheelRadius * 1.3, height: wheelWidth, segments: wheelRes });
+            const rotatedWheel = transforms.rotateX(Math.PI/2, wheelGeom);
+            
+            // Scooter base height from floor is fixed, anchor moves
+            const deckHeightFromFloor = wheelRadius; 
+            const deck = transforms.translate([scooterLength/2 - platformLen/2, 0, deckHeightFromFloor + scooterBaseHeight/2], platform);
+
+            const frontWheel = transforms.translate([-scooterLength/2, 0, wheelRadius], rotatedWheel);
+            const rearWheel = transforms.translate([scooterLength/2 - 10, 0, wheelRadius], rotatedWheel);
+
+            // Front Fork & Head Tube
+            const forkLeg = primitives.cylinder({ radius: 2, height: wheelRadius * 3, segments: 16 });
+            const forkLeft = transforms.translate([-scooterLength/2, -wheelWidth/2 - 2, wheelRadius * 2], forkLeg);
+            const forkRight = transforms.translate([-scooterLength/2, wheelWidth/2 + 2, wheelRadius * 2], forkLeg);
+            const forkTop = primitives.cylinder({ radius: 2.2, height: wheelWidth + 6, segments: 16 });
+            const forkBridge = transforms.translate([-scooterLength/2, 0, wheelRadius * 3.5], transforms.rotateX(Math.PI/2, forkTop));
+            
+            // Diagonal structural member connecting steering to body
+            const headTube = primitives.cylinder({ radius: 2.5, height: 40, segments: 16 });
+            const diagonalSupport = transforms.translate([-scooterLength/2 + 10, 0, wheelRadius * 5], 
+                transforms.rotateY(-Math.PI/6, headTube)
+            );
+            
+            const fork = booleans.union(forkLeft, forkRight, forkBridge, diagonalSupport);
+
+            // Steering Column
+            const columnHeight = basketHeight + 20;
+            const pillar = primitives.cylinder({ radius: 2.5, height: columnHeight - wheelRadius * 3, segments });
+            const dashboard = primitives.cuboid({ size: [10, 15, 5] });
+            
+            const steering = booleans.union(
+                transforms.translate([-scooterLength/2, 0, wheelRadius * 3.5 + (columnHeight - wheelRadius * 3)/2], pillar),
+                transforms.translate([-scooterLength/2, 0, columnHeight], dashboard)
+            );
+            
+            // Handlebars
+            const handleBar = primitives.cylinder({ radius: 1.5, height: handlebarWidth, segments });
+            const grips = transforms.translate([-scooterLength/2, 0, columnHeight - 2], transforms.rotateX(Math.PI/2, handleBar));
+            
+            // --- WHEEL ARMS SUSPENSION ---
+            const createWheelArm = (isLeft: boolean) => {
+                const xPos = scooterLength/2 + suspensionOffset; // Reference is the BACK (scooterLength/2). 0 means back, negative means toward stem.
+                const yPos = isLeft ? -scooterBaseWidth/2 : scooterBaseWidth/2;
+                const armSectionLen = wheelArmReach / 2;
+                const jointRadius = 2.5;
+
+                const shoulder = primitives.cylinder({ radius: jointRadius, height: 4, segments: 16 });
+                const armUpper = primitives.cylinder({ radius: 1.8, height: armSectionLen, segments: 16 });
+                const elbow = primitives.sphere({ radius: jointRadius * 0.8, segments: 16 });
+                const armLower = primitives.cylinder({ radius: 1.5, height: armSectionLen, segments: 16 });
+                const hub = primitives.cylinder({ radius: 2, height: 4, segments: 16 });
+                const outerWheel = primitives.cylinder({ radius: wheelRadius * 1.2, height: wheelRadius/2, segments: wheelRes });
+
+                // Construct the articulated arm - Pointing FORWARD along X axis
+                const arm = booleans.union(
+                    transforms.rotateX(Math.PI/2, shoulder),
+                    // Upper arm extends outwards
+                    transforms.translate([0, isLeft ? -armSectionLen/2 : armSectionLen/2, 0], transforms.rotateX(Math.PI/2, armUpper)),
+                    // Elbow joint
+                    transforms.translate([0, isLeft ? -armSectionLen : armSectionLen, 0], elbow),
+                    // Lower arm extends FORWARD along X
+                    transforms.translate([armSectionLen/2, isLeft ? -armSectionLen : armSectionLen, 0], transforms.rotateY(Math.PI/2, armLower)),
+                    // Hub and Wheel (Vertical and Parallel to travel)
+                    transforms.translate([armSectionLen, isLeft ? -armSectionLen : armSectionLen, 0], hub),
+                    transforms.translate([armSectionLen, isLeft ? -armSectionLen - (isLeft ? -2 : 2) : armSectionLen + (isLeft ? -2 : 2), 0], 
+                        transforms.rotateX(Math.PI/2, outerWheel)
+                    )
+                );
+
+                return transforms.translate([xPos, yPos, suspensionHeight], arm);
+            };
+
+            const suspension = booleans.union(
+                createWheelArm(true), createWheelArm(false)
+            );
+
+            const scooterAssembly = booleans.union(deck, frontWheel, rearWheel, fork, steering, grips, suspension);
+            assembly = booleans.union(assembly as any, scooterAssembly);
+        }
+
+        // 5. ROBOTIC ARMS (Optional)
+        if (hasArms) {
+            const armJointRadius = 3;
+            const armSectionLen = armReach / 2;
+            
+            const createArm = (isLeft: boolean) => {
+                const yPos = isLeft ? -basketWidth/2 : basketWidth/2;
+                const shoulder = primitives.cylinder({ radius: armJointRadius, height: 6, segments });
+                const armUpper = primitives.cylinder({ radius: 2, height: armSectionLen, segments });
+                const elbow = primitives.sphere({ radius: armJointRadius * 0.8, segments });
+                const armLower = primitives.cylinder({ radius: 1.5, height: armSectionLen, segments });
+                const hand = primitives.cuboid({ size: [4, 6, 2] });
+
+                // Mounting Plaque with 4 holes - Oriented in XZ plane (parallel to side wall)
+                const plaqueWidth = 20;
+                const plaqueHeight = 15;
+                const plaqueThickness = 2;
+                let plaque = primitives.cuboid({ size: [plaqueWidth, plaqueThickness, plaqueHeight] });
+                
+                // Add 4 bolt holes - Cutters oriented along Y axis
+                const holeRadius = 1.0;
+                const holeDistX = plaqueWidth/2 - 3;
+                const holeDistZ = plaqueHeight/2 - 3;
+                const holes = [
+                    [holeDistX, holeDistZ], [holeDistX, -holeDistZ],
+                    [-holeDistX, holeDistZ], [-holeDistX, -holeDistZ]
+                ].map(([x, z]) => 
+                    transforms.translate([x, 0, z], 
+                        transforms.rotateX(Math.PI/2, primitives.cylinder({ radius: holeRadius, height: plaqueThickness + 2, segments: 8 }))
+                    )
+                );
+                plaque = booleans.subtract(plaque, ...holes);
+
+                return transforms.translate([0, yPos, basketHeight * 0.7], 
+                    booleans.union(
+                        transforms.translate([0, isLeft ? plaqueThickness/2 : -plaqueThickness/2, 0], plaque),
+                        transforms.rotateX(Math.PI/2, shoulder),
+                        transforms.translate([0, isLeft ? -armSectionLen/2 : armSectionLen/2, 0], transforms.rotateX(Math.PI/2, armUpper)),
+                        transforms.translate([0, isLeft ? -armSectionLen : armSectionLen, 0], elbow),
+                        transforms.translate([armSectionLen/2, isLeft ? -armSectionLen : armSectionLen, 0], transforms.rotateY(Math.PI/2, armLower)),
+                transforms.translate([armSectionLen, isLeft ? -armSectionLen : armSectionLen, 0], hand)
+                    )
+                );
+            };
+
+            const armGroup = booleans.union(createArm(true), createArm(false));
+            assembly = booleans.union(assembly as any, transforms.translate([0, 0, basketFloorHeight], armGroup));
+        }
+
         assembly = transforms.rotateX(-Math.PI / 2, assembly);
 
         return this.saveModel(`shopping-cart-${Date.now()}`, assembly, { type: 'shopping-cart', parameters: options });
@@ -526,11 +725,11 @@ export class LocalCADClient {
 
     // Generates a high-performance parametric GoCart assembly.
     async createGoCart(options: GoCartOptions): Promise<{ id: string; url: string; stlUrl: string }> {
-        const { chassisLength, chassisWidth, wheelDiameter, seatHeight } = options;
+        const { chassisLength, chassisWidth, wheelDiameter, seatHeight, resolution = 64 } = options;
         const tubeRadius = 2;
         const wheelRadius = wheelDiameter / 2;
         const wheelWidth = wheelRadius * 0.8;
-        const segments = 16;
+        const segments = Math.max(8, Math.floor(resolution / 4));
 
         // 1. CHASSIS (Rectangular tube frame with cross-bracing)
         const frameWidth = chassisWidth;
@@ -623,6 +822,100 @@ export class LocalCADClient {
         assembly = transforms.rotateX(-Math.PI / 2, assembly);
 
         return this.saveModel(`go-cart-${Date.now()}`, assembly, { type: 'go-cart', parameters: options });
+    }
+
+    /**
+     * Generates a parametric Bottle using revolve operation with smooth arcs and detailed neck.
+     */
+    async createBottle(options: BottleOptions): Promise<{ id: string; url: string; stlUrl: string }> {
+        console.log('[LocalCAD] Creating Smooth & Detailed Bottle with options:', options);
+        const { bottomRadius, bodyHeight, shoulderHeight, neckRadius, neckHeight, wallThickness, resolution = 64 } = options;
+        
+        const fillet = Math.min(bottomRadius * 0.2, 5); 
+        const segments = Math.max(16, Math.floor(resolution / 2)); // Increased from resolution/4
+        const profilePoints: [number, number][] = [];
+
+        // Helper to add points and avoid duplicates/gaps
+        const addPoints = (pts: [number, number][]) => {
+            for (const p of pts) {
+                if (profilePoints.length > 0) {
+                    const last = profilePoints[profilePoints.length - 1];
+                    if (Math.abs(last[0] - p[0]) < 0.001 && Math.abs(last[1] - p[1]) < 0.001) continue;
+                }
+                profilePoints.push(p);
+            }
+        };
+
+        const generateArc = (center: [number, number], radius: number, startAngle: number, endAngle: number, reverse = false) => {
+            const pts: [number, number][] = [];
+            for (let i = 0; i <= segments; i++) {
+                const t = reverse ? (segments - i) / segments : i / segments;
+                const ang = startAngle + (endAngle - startAngle) * t;
+                pts.push([
+                    center[0] + Math.cos(ang) * radius,
+                    center[1] + Math.sin(ang) * radius
+                ]);
+            }
+            return pts;
+        };
+
+        // 1. OUTER PROFILE
+        addPoints([[0, 0]]);
+        addPoints(generateArc([bottomRadius - fillet, fillet], fillet, -Math.PI / 2, 0));
+        addPoints([[bottomRadius, bodyHeight]]);
+        
+        // Shoulder
+        const shoulderR = bottomRadius - neckRadius;
+        addPoints(generateArc([neckRadius, bodyHeight], shoulderR, 0, Math.PI / 2).map((p): [number, number] => [
+            p[0],
+            bodyHeight + (p[1] - bodyHeight) * (shoulderHeight / shoulderR)
+        ]));
+
+        // Neck & Mock Threads
+        const neckTop = bodyHeight + shoulderHeight + neckHeight;
+        const threadCount = 3;
+        const threadR = 0.5;
+        const threadPitch = 2.5;
+        const threadStartY = neckTop - 5;
+
+        for (let i = 0; i < threadCount; i++) {
+            const z = threadStartY - (i * threadPitch);
+            addPoints([[neckRadius, z + threadR]]);
+            addPoints(generateArc([neckRadius, z], threadR, Math.PI / 2, -Math.PI / 2, true));
+        }
+        
+        addPoints([[neckRadius, neckTop]]);
+        
+        // 2. INNER PROFILE (Reverse flow)
+        addPoints([[neckRadius - wallThickness, neckTop]]);
+        
+        // Inner neck
+        addPoints([[neckRadius - wallThickness, bodyHeight + shoulderHeight]]);
+        
+        // Inner shoulder
+        const innerShoulderR = shoulderR - wallThickness;
+        if (innerShoulderR > 0) {
+            addPoints(generateArc([neckRadius, bodyHeight + wallThickness], innerShoulderR, Math.PI / 2, 0, true).map((p): [number, number] => [
+                p[0],
+                bodyHeight + wallThickness + (p[1] - (bodyHeight + wallThickness)) * ((shoulderHeight - wallThickness) / innerShoulderR)
+            ]));
+        } else {
+            addPoints([[neckRadius - wallThickness, bodyHeight + wallThickness]]);
+        }
+        
+        addPoints([[bottomRadius - wallThickness, bodyHeight]]);
+        
+        // Inner Bottom fillet
+        if (fillet > wallThickness) {
+            addPoints(generateArc([bottomRadius - fillet, fillet], fillet - wallThickness, 0, -Math.PI / 2, true));
+        }
+        addPoints([[0, wallThickness]]);
+
+        const profile = primitives.polygon({ points: profilePoints });
+        const bottle = extrusions.extrudeRotate({ angle: Math.PI * 2, segments: resolution }, profile);
+        const assembly = transforms.rotateX(-Math.PI / 2, bottle);
+
+        return this.saveModel(`bottle-${Date.now()}`, assembly, { type: 'bottle', parameters: options });
     }
 
     private generateShape2D(regions: any[]): any {
@@ -792,16 +1085,16 @@ export class LocalCADClient {
 
         for (const op of operations) {
             if (op.type === 'extrude') {
-                const { depth = 10, direction = 'pos', opType = 'add', plane = 'alzado' } = op.params;
+                const { depth = 10, direction = 'pos', opType = 'add', plane = 'alzado', offset = 0 } = op.params;
                 const result2d = this.generateShape2D(op.sketch || []);
                 if (!result2d) continue;
 
                 let extruded = extrusions.extrudeLinear({ height: depth }, result2d);
 
                 // Handle direction offset
-                let zOffset = 0;
-                if (direction === 'neg') zOffset = -depth;
-                else if (direction === 'mid') zOffset = -depth / 2;
+                let zOffset = offset;
+                if (direction === 'neg') zOffset -= depth;
+                else if (direction === 'mid') zOffset -= depth / 2;
                 if (zOffset !== 0) {
                     extruded = transforms.translate([0, 0, zOffset], extruded);
                 }
@@ -823,7 +1116,7 @@ export class LocalCADClient {
                     }
                 }
             } else if (op.type === 'revolve') {
-                const { angle = 360, axisId = 'y', opType = 'add', plane = 'alzado' } = op.params;
+                const { angle = 360, axisId = 'y', opType = 'add', plane = 'alzado', offset = 0 } = op.params;
                 let result2d = this.generateShape2D(op.sketch || []);
                 if (!result2d) continue;
 
@@ -841,6 +1134,11 @@ export class LocalCADClient {
                 let revolved = extrusions.extrudeRotate({ angle: (angle * Math.PI) / 180, segments: 64 }, shapeForRotate);
 
                 // Now it's revolved around Z.
+                // Apply offset in Z
+                if (offset !== 0) {
+                    revolved = transforms.translate([0, 0, offset], revolved);
+                }
+
                 // We need to re-orient the 3D solid so the Z-axis aligns with the intended sketch axis.
                 if (axisId === 'x') {
                     // Turn Z into X
@@ -849,7 +1147,7 @@ export class LocalCADClient {
                     // Turn Z into Y (Match LatheGeometry behavior)
                     // If we revolved the original shape around Z, 
                     // and we want it to look like it revolved around Y in our coordinate system:
-                    revolved = transforms.rotateX(Math.PI / 2, revolved);
+                    revolved = transforms.rotateX(-Math.PI / 2, revolved);
                 }
 
                 // Then apply plane rotations
@@ -894,5 +1192,50 @@ export class LocalCADClient {
             console.error('[LocalCAD] Error saving Model:', error);
             throw error;
         }
+    }
+
+    /**
+     * Generates a dedicated Scooter assembly for isolated testing.
+     */
+    async createScooter(options: ScooterOptions): Promise<{ id: string; url: string; stlUrl: string }> {
+        console.log('[LocalCAD] Creating Isolated Scooter with options:', JSON.stringify(options, null, 2));
+        const { 
+            scooterLength = 100, handlebarWidth = 50, resolution = 64
+        } = options;
+        
+        const segments = Math.max(8, Math.floor(resolution / 4));
+        const legHeight = 30;
+        const basketHeight = 30;
+        const wheelRadius = 5;
+        const wheelWidth = 4;
+
+        // Platform
+        const scooterBaseWidth = 30;
+        const scooterBaseHeight = 10;
+        const platform = primitives.cuboid({ size: [scooterLength, scooterBaseWidth, scooterBaseHeight] });
+        const deck = transforms.translate([0, 0, scooterBaseHeight/2], platform);
+        
+        // Front Motor/Mudguard
+        const housing = primitives.cylinder({ radius: wheelRadius * 1.8, height: wheelWidth + 8, segments });
+        const frontHousing = transforms.translate([-scooterLength/2, 0, wheelRadius], transforms.rotateX(Math.PI/2, housing));
+        
+        // Steering Column
+        const columnHeight = legHeight + basketHeight + 20;
+        const pillar = primitives.cylinder({ radius: 2.5, height: columnHeight, segments });
+        const dashboard = primitives.cuboid({ size: [10, 15, 5] });
+        
+        const steering = booleans.union(
+            transforms.translate([-scooterLength/2 + 5, 0, columnHeight/2], pillar),
+            transforms.translate([-scooterLength/2 + 5, 0, columnHeight], dashboard)
+        );
+        
+        // Handlebars
+        const handleBar = primitives.cylinder({ radius: 1.5, height: handlebarWidth, segments });
+        const grips = transforms.translate([-scooterLength/2 + 5, 0, columnHeight - 2], transforms.rotateX(Math.PI/2, handleBar));
+        
+        const assembly = booleans.union(deck, frontHousing, steering, grips);
+        const oriented = transforms.rotateX(-Math.PI / 2, assembly);
+
+        return this.saveModel(`scooter-${Date.now()}`, oriented, { type: 'scooter', parameters: options });
     }
 }

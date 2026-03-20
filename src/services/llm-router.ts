@@ -299,6 +299,29 @@ async function resolveDocumentPayloads(messages: any[]): Promise<any[]> {
     return resolvedMessages;
 }
 
+/**
+ * Stage 1 of the Local Vision Pipeline: Get a text description of images.
+ * Necessary because many local vision models (like llama3.2-vision) don't support tool calling.
+ */
+async function describeImagesLocally(images: string[]): Promise<string> {
+    console.log(`[LLM Router] Describing ${images.length} images using ${config.LOCAL_VISION_MODEL}...`);
+    try {
+        const response = await ollama.chat({
+            model: config.LOCAL_VISION_MODEL,
+            messages: [{
+                role: 'user',
+                content: 'Describe these images in extreme detail. Focus on text, layout, UI elements, and overall context. Be concise but thorough.',
+                images: images
+            }],
+            stream: false
+        });
+        return response.message.content;
+    } catch (error: any) {
+        console.error('[LLM Router] Local image description failed:', error.message);
+        return "[Image description failed]";
+    }
+}
+
 export async function queryGeneralAgent(messages: any[], tools?: any[]): Promise<{ answer: string; confidence: number; modelUsed?: string }> {
     console.log('[LLM Router] General Agent Request with Native Tools');
 
@@ -394,13 +417,45 @@ export async function queryGeneralAgent(messages: any[], tools?: any[]): Promise
 
         if (config.FORCE_LOCAL) {
             console.log('[LLM Router] FORCE_LOCAL is true, bypassing paid APIS and falling back to robust local models...');
-            const fallbackModel = hasImages ? config.LOCAL_VISION_MODEL : config.LOCAL_CODING_MODEL;
+            
+            let finalMessages = mappedMessages;
+            let fallbackModel = hasImages ? config.LOCAL_VISION_MODEL : config.LOCAL_CODING_MODEL;
+            
+            // Vision-Reasoning Pipeline for Local Models
+            // If we have images and tools, we must decouple them because llama3.2-vision doesn't support tools.
+            if (hasImages && tools && tools.length > 0) {
+                console.log('[LLM Router] Vision + Tools detected in FORCE_LOCAL mode. Activating Pipeline...');
+                
+                // Collect all images from all messages
+                const allImages: string[] = [];
+                mappedMessages.forEach(m => {
+                    if (m.images) allImages.push(...m.images);
+                });
+
+                if (allImages.length > 0) {
+                    const description = await describeImagesLocally(allImages);
+                    
+                    // Create augmented messages: Remove binary images and inject description into the first user message or prepended
+                    finalMessages = mappedMessages.map(m => ({ ...m, images: undefined }));
+                    
+                    // Find first user message to inject description
+                    const firstUserMsg = finalMessages.find(m => m.role === 'user');
+                    if (firstUserMsg) {
+                        firstUserMsg.content = `[LOCAL IMAGE RECOGNITION DESCRIPTION]\n${description}\n[END IMAGE DESCRIPTION]\n\n` + firstUserMsg.content;
+                    }
+                }
+                
+                // Now use a tool-capable model for the second stage
+                fallbackModel = config.LOCAL_CODING_MODEL;
+                console.log(`[LLM Router] Pipeline: Switch to tool-capable model: ${fallbackModel}`);
+            }
+
             console.log(`[LLM Router] Using local fallback model: ${fallbackModel}`);
 
             try {
                 const response = await ollama.chat({
                     model: fallbackModel,
-                    messages: mappedMessages,
+                    messages: finalMessages,
                     tools: formattedTools,
                     stream: false,
                 });
